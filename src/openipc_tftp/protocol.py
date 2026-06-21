@@ -1,4 +1,4 @@
-"""Filename protocol parsing for U-Boot RRQ messages."""
+"""Filename parsing for session and static TFTP requests."""
 
 from __future__ import annotations
 
@@ -10,16 +10,16 @@ CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
-class ClientMessage:
-    """A parsed RRQ filename from the U-Boot client."""
-
-    client_id: str
+class ParsedPath:
+    raw: str
+    client_id: str | None
+    path: str
     segments: tuple[str, ...] = ()
     values: dict[str, str] = field(default_factory=dict)
 
     @property
-    def channel(self) -> str:
-        return self.segments[0] if self.segments else "bootstrap"
+    def is_session(self) -> bool:
+        return self.client_id is not None
 
 
 def normalize_client_id(value: str) -> str:
@@ -29,27 +29,25 @@ def normalize_client_id(value: str) -> str:
     return client_id
 
 
-def parse_client_filename(filename: str) -> ClientMessage:
-    """Parse `id=<identifier>/...` RRQ filenames.
-
-    Path segment values are URL-decoded. Segments in `key=value` form are also
-    exposed in `values`.
-    """
-
+def parse_request_path(filename: str) -> ParsedPath:
     path = filename.strip("/")
     if not path:
-        raise ValueError("empty RRQ filename")
+        return ParsedPath(raw=filename, client_id=None, path="/")
 
     raw_segments = tuple(unquote(segment) for segment in path.split("/") if segment)
     if not raw_segments:
-        raise ValueError("empty RRQ filename")
+        return ParsedPath(raw=filename, client_id=None, path="/")
 
     key, separator, value = raw_segments[0].partition("=")
     if key != "id" or separator != "=":
-        raise ValueError("RRQ filename must start with id=<identifier>")
+        return ParsedPath(
+            raw=filename,
+            client_id=None,
+            path="/" + "/".join(raw_segments),
+            segments=raw_segments,
+        )
 
     client_id = normalize_client_id(value)
-
     message_segments = raw_segments[1:]
     values: dict[str, str] = {}
     for segment in message_segments:
@@ -57,8 +55,15 @@ def parse_client_filename(filename: str) -> ClientMessage:
         if segment_separator == "=" and segment_key:
             values[segment_key] = segment_value
 
-    return ClientMessage(
+    if not message_segments:
+        request_path = "/"
+    else:
+        request_path = "/" + "/".join(message_segments)
+
+    return ParsedPath(
+        raw=filename,
         client_id=client_id,
+        path=request_path,
         segments=message_segments,
         values=values,
     )

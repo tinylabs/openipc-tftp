@@ -1,45 +1,24 @@
-from openipc_tftp.protocol import parse_client_filename
+from openipc_tftp.protocol import parse_request_path
 from openipc_tftp.sessions import InMemorySessionStore
 
 
-def test_session_store_records_messages_and_env_values():
+def test_session_store_can_replace_session():
     store = InMemorySessionStore()
 
-    first = store.record(parse_client_filename("id=cam123/"))
-    second = store.record(
-        parse_client_filename(
-            "id=cam123/env/ipaddr=192.168.1.50/serial=abc123"
-        )
-    )
+    first = store.create("cam123")
+    second = store.replace("cam123")
 
-    assert first is second
-    assert second.sequence == 2
-    assert second.env == {"ipaddr": "192.168.1.50", "serial": "abc123"}
+    assert first is not second
+    assert store.require("cam123") is second
 
 
-def test_session_store_records_var_and_set_results():
+def test_session_records_rrq_state():
     store = InMemorySessionStore()
+    session = store.create("cam123")
 
-    session = store.record(
-        parse_client_filename("id=cam123/var/bootcmd=run_boot")
-    )
-    session = store.record(
-        parse_client_filename("id=cam123/set/bootdelay=ok")
-    )
+    session.record_rrq(parse_request_path("id=cam123/bootstrap"))
+    session.record_rrq(parse_request_path("id=cam123/token=abc123"))
 
-    assert session.observed_vars == {"bootcmd": "run_boot"}
-    assert session.completed_sets == {"bootdelay": "ok"}
-
-
-def test_session_store_records_reports_and_action_completions():
-    store = InMemorySessionStore()
-
-    session = store.record(
-        parse_client_filename("id=cam123/report/filesize=1024")
-    )
-    session = store.record(
-        parse_client_filename("id=cam123/run/smoke=ok")
-    )
-
-    assert session.reports == {"filesize": "1024"}
-    assert session.completed_actions == {"smoke": "ok"}
+    assert session.rrq_count == 2
+    assert session.last_path == "/token=abc123"
+    assert len(session.requests) == 2

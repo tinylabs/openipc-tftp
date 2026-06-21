@@ -1,15 +1,14 @@
-"""Upload capture support for tftpy WRQ/tftpput transfers."""
+"""Upload capture for session-scoped WRQ requests."""
 
 from __future__ import annotations
 
 import io
-import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import BinaryIO
 
-from .protocol import parse_client_filename
+from .protocol import parse_request_path
+from .sessions import InMemorySessionStore
 
 
 @dataclass(frozen=True)
@@ -32,13 +31,8 @@ class UploadedFile:
         return len(self.body)
 
 
-class UploadStore(Protocol):
-    def open(self, request: UploadRequest) -> BinaryIO:
-        """Return a writable binary object for one upload."""
-
-
-class CapturingUpload(io.BytesIO):
-    def __init__(self, request: UploadRequest, store: InMemoryUploadStore) -> None:
+class _CapturingUpload(io.BytesIO):
+    def __init__(self, request: UploadRequest, store: "InMemoryUploadStore") -> None:
         super().__init__()
         self._request = request
         self._store = store
@@ -52,16 +46,40 @@ class CapturingUpload(io.BytesIO):
 
 
 class InMemoryUploadStore:
-    """Capture uploaded files in memory for protocol handling and debugging."""
+    """Capture only session-scoped uploads in RAM."""
 
-    def __init__(self) -> None:
+    def __init__(self, sessions: InMemorySessionStore) -> None:
+        self.sessions = sessions
         self.uploads: list[UploadedFile] = []
         self.by_client_id: dict[str, list[UploadedFile]] = {}
 
     def open(self, request: UploadRequest) -> BinaryIO:
-        return CapturingUpload(request, self)
+        parsed = parse_request_path(request.filename)
+        if parsed.client_id is None:
+            raise FileNotFoundError("static uploads must be written to disk")
+        session = self.sessions.require(parsed.client_id)
+        pending = session.pending_receive
+        if (
+            pending is None
+            or not parsed.path.endswith(pending.upload_path)
+            or parsed.values.get("token") != pending.token
+        ):
+            raise FileNotFoundError(f"unexpected session upload path: {request.filename!r}")
+        return _CapturingUpload(request, self)
 
     def record(self, request: UploadRequest, body: bytes) -> None:
+        parsed = parse_request_path(request.filename)
+        if parsed.client_id is None:
+            raise FileNotFoundError("static uploads must be written to disk")
+        session = self.sessions.require(parsed.client_id)
+        pending = session.pending_receive
+        if (
+            pending is None
+            or not parsed.path.endswith(pending.upload_path)
+            or parsed.values.get("token") != pending.token
+        ):
+            raise FileNotFoundError(f"unexpected session upload path: {request.filename!r}")
+        pending.uploaded = body
         upload = UploadedFile(
             filename=request.filename,
             peer=request.peer,
@@ -69,46 +87,7 @@ class InMemoryUploadStore:
             body=body,
         )
         self.uploads.append(upload)
-        try:
-            message = parse_client_filename(request.filename)
-        except ValueError:
-            return
-        self.by_client_id.setdefault(message.client_id, []).append(upload)
+        self.by_client_id.setdefault(parsed.client_id, []).append(upload)
 
     def all(self) -> list[UploadedFile]:
         return list(self.uploads)
-
-
-class DiskUploadStore(InMemoryUploadStore):
-    """Capture uploads in memory and persist them under an upload directory."""
-
-    def __init__(self, root: str | os.PathLike[str]) -> None:
-        super().__init__()
-        self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
-
-    def record(self, request: UploadRequest, body: bytes) -> None:
-        super().record(request, body)
-        path = self.path_for(request.filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(body)
-
-    def path_for(self, filename: str) -> Path:
-        try:
-            message = parse_client_filename(filename)
-        except ValueError:
-            disk_filename = filename
-        else:
-            suffix = "/".join(message.segments)
-            disk_filename = (
-                message.client_id if not suffix else f"{message.client_id}/{suffix}"
-            )
-
-        relative = Path(disk_filename.lstrip("/"))
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"unsafe upload filename: {filename!r}")
-        path = (self.root / relative).resolve()
-        root = self.root.resolve()
-        if root != path and root not in path.parents:
-            raise ValueError(f"unsafe upload filename: {filename!r}")
-        return path

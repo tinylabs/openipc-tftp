@@ -21,6 +21,29 @@ class DaemonConfig:
     routes: dict[str, ScriptRoute]
     default: ScriptRoute
 
+    @property
+    def static_root(self) -> Path:
+        value = (
+            self.server.get("root")
+            or self.server.get("static_root")
+            or self.server.get("tftproot")
+            or "."
+        )
+        path = Path(str(value))
+        if path.is_absolute():
+            return path
+        return (self.path.parent / path).resolve()
+
+    @property
+    def script_path(self) -> Path:
+        value = self.server.get("scriptfile") or self.server.get("script")
+        if not value:
+            raise ValueError("[server] must set scriptfile")
+        path = Path(str(value))
+        if path.is_absolute():
+            return path
+        return (self.path.parent / path).resolve()
+
 
 def load_daemon_config(path: str | Path) -> DaemonConfig:
     config_path = Path(path)
@@ -41,7 +64,7 @@ def load_daemon_config(path: str | Path) -> DaemonConfig:
         routes[str(section).lower()] = ScriptRoute(script=str(route["script"]))
 
     return DaemonConfig(
-        path=config_path,
+        path=config_path.resolve(),
         server=server,
         env=env,
         routes=routes,
@@ -60,15 +83,11 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _load_simple_toml(path: Path) -> dict[str, Any]:
-    """Load the small TOML subset used by openipc-tftp configs on Python 3.10."""
-
     data: dict[str, Any] = {}
     section: dict[str, Any] | None = None
     for line_number, raw_line in enumerate(path.read_text().splitlines(), start=1):
         line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("#"):
+        if not line or line.startswith("#"):
             continue
         if line.startswith("[") and line.endswith("]"):
             name = line[1:-1].strip()

@@ -1,13 +1,19 @@
+import pytest
+import re
+
 from openipc_tftp.config import load_daemon_config
 from openipc_tftp.mkimage import extract_script_payload
 from openipc_tftp.providers import ContentRequest
-from openipc_tftp.scripted import ScriptedConfigProvider
+from openipc_tftp.scripted import ScriptedSessionProvider
+from openipc_tftp.sessions import InMemorySessionStore
 from openipc_tftp.uploads import InMemoryUploadStore, UploadRequest
-import pytest
 
 
 def script_from_result(result):
     return extract_script_payload(result.body).decode("utf-8")
+
+
+TOKEN_RE = re.compile(r'id=cam123/token=([^"/]+)')
 
 
 def request(filename):
@@ -28,12 +34,12 @@ def write_config(tmp_path, script_body, route="handler"):
             (
                 "[server]",
                 'scriptfile = "script.py"',
+                'root = "static"',
                 "",
                 "[env]",
-                'bootcmd = "boot"',
-                'base = "toml"',
+                'ramvar = "loadaddr"',
                 'cmdtftp = "tftpboot"',
-                'ramvar = "ramaddr"',
+                'cmdtftpput = "tftpput"',
                 "",
                 "[cam123]",
                 f'script = "{route}"',
@@ -51,138 +57,173 @@ def test_scripted_provider_routes_by_client_id_and_passes_path(tmp_path):
         tmp_path,
         "\n".join(
             (
-                "def handler(uboot, ident, path):",
-                "    uboot.send_noreply(f'known {ident} {path}')",
+                "async def handler(tftp, ident, path):",
+                "    await tftp.exec([f'echo known {ident} {path}'], final=True)",
                 "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply(f'default {ident} {path}')",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec([f'echo default {ident} {path}'], final=True)",
             )
         ),
     )
-    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
+    )
 
-    assert "known cam123 /boot" in script_from_result(provider.fetch(request("id=cam123/boot")))
-    assert "default other123 /boot" in script_from_result(
+    assert "echo known cam123 /boot" in script_from_result(provider.fetch(request("id=cam123/boot")))
+    assert "echo default other123 /boot" in script_from_result(
         provider.fetch(request("id=other123/boot"))
     )
 
 
-def test_scripted_provider_serves_static_image_for_bare_rrq(tmp_path):
+def test_scripted_provider_serves_static_file_for_bare_rrq(tmp_path):
     config = write_config(
         tmp_path,
         "\n".join(
             (
-                "def handler(uboot, ident, path):",
-                "    uboot.send_noreply('known')",
+                "async def handler(tftp, ident, path):",
+                "    await tftp.exec(['echo known'], final=True)",
                 "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply('default')",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec(['echo default'], final=True)",
             )
         ),
     )
-    images_dir = tmp_path / "images"
-    images_dir.mkdir()
-    payload = b"bare-static-image"
-    (images_dir / "uImage").write_bytes(payload)
+    static_root = tmp_path / "static"
+    static_root.mkdir()
+    (static_root / "uImage").write_bytes(b"bare-static-image")
 
-    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
+    )
 
     result = provider.fetch(request("uImage"))
-    assert result.body == payload
+    assert result.body == b"bare-static-image"
 
 
-def test_scripted_provider_rejects_missing_bare_rrq_static_image(tmp_path):
+def test_exec_appends_internal_continuation_rrq(tmp_path):
     config = write_config(
         tmp_path,
         "\n".join(
             (
-                "def handler(uboot, ident, path):",
-                "    uboot.send_noreply('known')",
+                "async def handler(tftp, ident, path):",
+                "    await tftp.exec(['echo step1'])",
+                "    await tftp.exec(['echo step2'], final=True)",
                 "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply('default')",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec(['echo default'], final=True)",
             )
         ),
     )
-    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
-
-    with pytest.raises(FileNotFoundError):
-        provider.fetch(request("missing.bin"))
-
-
-def test_scripted_provider_falls_back_to_default_when_static_image_is_missing(tmp_path):
-    config = write_config(
-        tmp_path,
-        "\n".join(
-            (
-                "def handler(uboot, ident, path):",
-                "    uboot.send_noreply('known')",
-                "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply(f'default {ident} {path}')",
-            )
-        ),
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
     )
-    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
-
-    script = script_from_result(provider.fetch(request("id=other123/missing.bin")))
-    assert "default other123 /missing.bin" in script
-
-
-def test_send_wraps_script_with_continue_rrq(tmp_path):
-    config = write_config(
-        tmp_path,
-        "\n".join(
-            (
-                "def handler(uboot, ident, path):",
-                "    uboot.send('echo hello')",
-                "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply('default')",
-            )
-        ),
-    )
-    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
-
-    script = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
-
-    assert "echo hello" in script
-    assert 'if tftpboot ${ramaddr} "${serverip}:id=cam123/bootstrap"' in script
-    assert "then source ${ramaddr};" in script
-
-
-def test_get_env_requests_upload_then_merges_with_config_env(tmp_path):
-    config = write_config(
-        tmp_path,
-        "\n".join(
-            (
-                "def handler(uboot, ident, path):",
-                "    env = uboot.get_env()",
-                "    uboot.send_noreply(f\"{env['base']} {env['bootcmd']} {env['ipaddr']}\")",
-                "",
-                "def default(uboot, ident, path):",
-                "    uboot.send_noreply('default')",
-            )
-        ),
-    )
-    uploads = InMemoryUploadStore()
-    provider = ScriptedConfigProvider(config, upload_store=uploads)
 
     first = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
-    assert "env export -t ${ramaddr}" in first
-    assert 'if tftpput ${ramaddr} ${filesize} "${serverip}:' in first
-    assert 'id=cam123/upload/env.txt' in first
-    assert 'id=cam123/bootstrap' in first
+    assert "echo step1" in first
+    first_token = TOKEN_RE.search(first)
+    assert first_token is not None
+    first_token = first_token.group(1)
+    assert f'tftpboot ${{loadaddr}} "127.0.0.1:id=cam123/token={first_token}"' in first
+
+    second = script_from_result(provider.fetch(request(f"id=cam123/token={first_token}")))
+    assert "echo step2" in second
+    assert "token=" not in second
+
+
+def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, path):",
+                "    data = await tftp.exec_recv(['echo send upload'], 8)",
+                "    tftp.write_file('saved/dump.bin', data)",
+                "    await tftp.exec(['echo done'], final=True)",
+                "",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    uploads = InMemoryUploadStore(sessions)
+    provider = ScriptedSessionProvider(config, sessions=sessions, upload_store=uploads)
+
+    first = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
+    assert "echo send upload" in first
+    token_match = TOKEN_RE.search(first)
+    assert token_match is not None
+    token = token_match.group(1)
+    assert f'tftpput ${{loadaddr}} 8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
+    assert f'tftpboot ${{loadaddr}} "127.0.0.1:id=cam123/token={token}/recv=ok"' in first
 
     upload = uploads.open(
         UploadRequest(
-            filename="id=cam123/upload/env.txt",
+            filename=f"id=cam123/token={token}/upload.bin",
             peer=("127.0.0.1", 12345),
             server_addr=("127.0.0.1", 6969),
         )
     )
-    upload.write(b"bootcmd=run target\nipaddr=192.168.1.50\n")
+    upload.write(b"firmware")
     upload.close()
 
-    second = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
-    assert "toml run target 192.168.1.50" in second
+    second = script_from_result(provider.fetch(request(f"id=cam123/token={token}/recv=ok")))
+    assert "echo done" in second
+    assert (tmp_path / "static" / "saved" / "dump.bin").read_bytes() == b"firmware"
+
+
+def test_exec_recv_can_be_caught_by_user_script(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "from openipc_tftp.scripted import ReceiveFailedError",
+                "",
+                "async def handler(tftp, ident, path):",
+                "    try:",
+                "        await tftp.exec_recv(['echo send upload'], 8)",
+                "    except ReceiveFailedError:",
+                "        await tftp.exec(['echo recv failed'], final=True)",
+                "        return",
+                "    await tftp.exec(['echo unexpected'], final=True)",
+                "",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    uploads = InMemoryUploadStore(sessions)
+    provider = ScriptedSessionProvider(config, sessions=sessions, upload_store=uploads)
+
+    first = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
+    token_match = TOKEN_RE.search(first)
+    assert token_match is not None
+    token = token_match.group(1)
+    second = script_from_result(provider.fetch(request(f"id=cam123/token={token}/recv=failed")))
+    assert "echo recv failed" in second
+
+
+def test_exec_recv_rejects_final_true(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, path):",
+                "    await tftp.exec_recv(['echo bad'], 8, final=True)",
+                "",
+                "async def default(tftp, ident, path):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
+    )
+
+    with pytest.raises(ValueError, match="final=True"):
+        provider.fetch(request("id=cam123/bootstrap"))

@@ -1,201 +1,150 @@
 # openipc-tftp
 
-`openipc-tftp` is a small Python package scaffold for building dynamic TFTP
-servers on top of [`tftpy`](https://pypi.org/project/tftpy/).
+Minimal session-aware TFTP server for OpenIPC and U-Boot style workflows.
 
-The package keeps the dynamic content decision behind a provider interface. The
-RRQ filename, peer address, server address, and negotiated options are passed to
-that provider, and the provider returns bytes or a binary stream that `tftpy`
-can send back to the client.
+There are only two request modes:
 
-## Status
+- RRQ or WRQ without `id=<ident>`: handled as a normal static TFTP file operation under the configured root directory.
+- RRQ or WRQ starting with `id=<ident>`: handled as part of a session.
 
-This is a scaffold. It includes packaging metadata, a `tftpy` adapter layer,
-a minimal CLI, dynamic RRQ responses, and WRQ/tftpput upload capture.
+## Session Model
 
-## Install for Development
-
-```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements-dev.txt
-python -m pip install -e .
-pytest
-```
-
-For runtime-only installs from a checkout, use:
-
-```bash
-python -m pip install -r requirements.txt
-python -m pip install -e .
-```
-
-## U-Boot Protocol
-
-The primary client key is an identifier containing letters, digits, `-`, and `_`
-encoded into the RRQ
-filename:
+A session starts when the server receives an RRQ like:
 
 ```text
-id=cam123/
-id=cam123/env/ipaddr=192.168.1.50/serial=abc123
+id=cam123/bootstrap
 ```
 
-The first segment must be `id=<identifier>`. Remaining path segments are protocol
-data. Segments in `key=value` form are parsed and attached to the in-memory
-client session. The built-in session store is process-local and keyed by
-client identifier.
+The server creates a new session for `cam123` and calls the matching user handler from `script.py`. If no matching section exists in `config.toml`, the `[default]` handler is used.
 
-The intended U-Boot bootstrap is:
+Session handlers are `async def` functions. They use these helpers:
 
-```bash
-setenv autoload no; dhcp; tftpboot ${baseaddr} "${serverip}:id=cam123/"; source ${baseaddr}
-```
+- `await tftp.exec(script, final=False)`
+- `await tftp.exec_recv(script, size)`
+- `tftp.write_file(path, body)`
 
-Responses are generated as U-Boot legacy script images in pure Python, matching
-the shape produced by `mkimage -T script`. No system `mkimage` binary is needed.
+`exec(...)` sends a script to the client. If `final=False`, the server appends an internal continuation `tftpboot` so the session can continue on the next RRQ.
 
-## Provider Shape
+`exec(..., final=True)` sends the script without appending continuation. That ends the session.
 
-```python
-from openipc_tftp import ContentRequest, ContentResult
+`exec_recv(...)` sends a script that:
 
+1. runs your commands
+2. performs an internal `tftpput`
+3. performs an internal continuation `tftpboot`
 
-def fetch_content(request: ContentRequest) -> ContentResult:
-    if request.filename == "hello.txt":
-        return ContentResult.from_bytes(b"hello\n")
-    raise FileNotFoundError(request.filename)
-```
+When the client returns on the continuation RRQ, `exec_recv(...)` resumes and returns the uploaded bytes to the handler.
 
-## Server Shape
+If the upload fails and the client returns on the failure continuation path, `exec_recv(...)` raises `ReceiveFailedError`.
 
-```python
-from openipc_tftp import CallableContentProvider, DynamicContentServer
+## Config
 
-
-server = DynamicContentServer(
-    address="::",
-    port=6969,
-    retries=3,
-    timeout=5,
-    provider=CallableContentProvider(fetch_content),
-)
-server.run()
-```
-
-## Daemon Config
-
-The CLI runs as a config-driven daemon and takes one argument: a TOML file.
-
-```bash
-openipc-tftp config.toml
-```
-
-The TOML file has `[server]`, `[env]`, one section per known client ID, and a
-`[default]` route:
+Example [`config.toml`](/home/elliot/work/openipc/openipc-tftp/config.toml:1):
 
 ```toml
 [server]
 scriptfile = "script.py"
-upload = "/tmp/openipc-tftp-upload"
+root = "files"
 address = "::"
 port = 6969
+timeout = 5
+retries = 3
 
 [env]
+ramvar = "loadaddr"
 cmdtftp = "tftpboot"
-ramvar = "baseaddr"
+cmdtftpput = "tftpput"
 
 [cam123]
-script = "boot_nfs"
+script = "camera_bootstrap"
 
 [default]
 script = "default"
 ```
 
-`[server]` controls daemon settings. Supported keys include `scriptfile`,
-`upload` or `upload_dir`, `address`, `port`, `retries`, `timeout`, and
-`log_level`. `[env]` provides base environment values for scripts. The daemon
-uses `[env].cmdtftp` when it generates follow-up download commands and expands
-`[env].ramvar` as a U-Boot variable reference, for example `ramvar = "baseaddr"`
-becomes `${baseaddr}`.
+## Script API
 
-Each route section names a Python function from `scriptfile`. The function is
-called as:
+Example [`script.py`](/home/elliot/work/openipc/openipc-tftp/script.py:1):
 
 ```python
-def default(uboot, ident, path):
-    env = uboot.get_env()
-    uboot.send_noreply(f"echo booting {ident} from {path}")
+from openipc_tftp.scripted import ReceiveFailedError
+
+
+async def default(tftp, ident, path):
+    await tftp.exec(
+        [
+            f"echo default session for {ident}",
+            f"echo requested path: {path}",
+        ],
+        final=True,
+    )
+
+
+async def camera_bootstrap(tftp, ident, path):
+    if path == "/bootstrap":
+        await tftp.exec(
+            [
+                f"echo preparing {ident}",
+                f"echo using ${tftp.baseaddr_var}",
+            ]
+        )
+
+        try:
+            data = await tftp.exec_recv(
+                [
+                    "echo uploading environment snapshot",
+                    f"env export -t ${{{tftp.baseaddr_var}}}",
+                ],
+                4096,
+            )
+        except ReceiveFailedError:
+            await tftp.exec(["echo upload failed"], final=True)
+            return
+
+        tftp.write_file(f"uploads/{ident}-env.txt", data)
+        await tftp.exec(["echo bootstrap complete"], final=True)
+        return
+
+    await tftp.exec([f"echo unknown path {path}"], final=True)
 ```
 
-The first argument exposes:
+## Static Files
 
-- `get_env()`: exports the target U-Boot environment with `tftpput`, receives
-  it, and returns `[env]` merged with target values. Target values win.
-- `send(script)`: sends a script and appends a guarded follow-up RRQ for the
-  same `id=` and path.
-- `send_noreply(script)`: sends a script without appending another RRQ.
+Files under `root` are served directly for bare RRQ requests and written directly for bare WRQ requests.
 
-If an incoming `id=` does not match any configured route, the `[default]`
-script function runs.
+Example:
 
-If the RRQ filename does not start with `id=`, it is treated as a static-only
-request under `images/`. If the file is missing, the server returns the normal
-TFTP missing-file failure.
-
-Example U-Boot upload path used by `get_env()`:
-
-```bash
-tftpput ${baseaddr} ${filesize} "${serverip}:id=cam123/upload/env.txt"
+```text
+RRQ uImage
+WRQ backup.bin
 ```
 
-That example writes under the configured upload directory as
-`<identifier>/upload/env.txt`. The `id=` prefix is removed from the directory
-name.
+These map to files under `files/` when `root = "files"`.
 
-For local testing with a desktop TFTP client:
-
-```bash
-tftp 127.0.0.1 6969 -c get 'id=cam123/' /tmp/boot.scr.uimg
-```
-
-U-Boot can request a literal `id=<identifier>/` filename, and follow-up scripts
-continue using that original identifier.
-
-For multi-round-trip testing without a target, run the daemon in one shell and
-the helper client in another. The helper uses the system `tftp` executable for
-RRQ and WRQ transfers, prints each returned script, uploads a mock exported
-environment when `get_env()` asks for one, and follows generated continuation
-RRQs:
+## Running
 
 ```bash
 openipc-tftp config.toml
-openipc-tftp-client 127.0.0.1 --port 6969 --id camfront --path /bootstrap \
-  --target-env hostname=camfront --target-env bootcmd='run boot_normal'
 ```
 
-Use `--target-env-file env.txt` for larger mock environments and `--keep-dir
-./client-runs` to retain downloaded script images and generated upload files.
+## Simulated Client
 
-To inspect a returned script image during testing:
+You can exercise the session flow without hardware:
 
 ```bash
-python - <<'PY'
-from pathlib import Path
-from openipc_tftp import extract_script_payload
-
-print(extract_script_payload(Path("/tmp/boot.scr.uimg").read_bytes()).decode())
-PY
+openipc-tftp-client 127.0.0.1 --id cam123 --path /bootstrap
 ```
 
-The image uses the same payload layout as `mkimage -T script`: a 64-byte legacy
-image header, an 8-byte script component table, then the script text.
+The simulated client:
 
-Use a high port during development unless the process has permission to bind to
-UDP port 69.
+- downloads script images with RRQ
+- prints the script contents
+- echoes non-transfer commands to the terminal
+- follows embedded continuation `tftpboot` requests
+- uploads dummy binary data for embedded `tftpput` requests
 
-## Publishing Notes
+It also keeps the old image-extraction mode:
 
-Before publishing, choose and add a license file, confirm the package name on
-the target index, and replace the placeholder CLI provider with a production
-provider or plugin-loading mechanism.
+```bash
+openipc-tftp-client boot.uimg
+```

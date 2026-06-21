@@ -1,5 +1,6 @@
 from openipc_tftp import CallableContentProvider, ContentResult
 from openipc_tftp.server import DynamicContentServer, fileobj_from_result
+from openipc_tftp.sessions import InMemorySessionStore, PendingReceive
 from openipc_tftp.uploads import InMemoryUploadStore
 
 
@@ -29,6 +30,7 @@ def test_dynamic_content_server_passes_rrq_context_to_provider(tmp_path):
         retries=3,
         timeout=5,
         provider=CallableContentProvider(fetch),
+        upload_store=InMemoryUploadStore(InMemorySessionStore()),
         tftproot=tmp_path,
         server_factory=FakeTftpServer,
     )
@@ -43,8 +45,15 @@ def test_dynamic_content_server_passes_rrq_context_to_provider(tmp_path):
     assert fileobj.read() == b"ok"
 
 
-def test_dynamic_content_server_opens_upload_sink(tmp_path):
-    upload_store = InMemoryUploadStore()
+def test_dynamic_content_server_opens_expected_session_upload_sink(tmp_path):
+    sessions = InMemorySessionStore()
+    session = sessions.create("cam123")
+    session.pending_receive = PendingReceive(
+        token="abc123",
+        upload_path="/upload.bin",
+        size=8,
+    )
+    upload_store = InMemoryUploadStore(sessions)
     server = DynamicContentServer(
         address="127.0.0.1",
         port=6969,
@@ -63,18 +72,40 @@ def test_dynamic_content_server_opens_upload_sink(tmp_path):
 
     context = Context()
     upload = server._open_upload(
-        str(tmp_path / "id=cam123" / "upload" / "env.txt"),
+        str(tmp_path / "id=cam123" / "token=abc123" / "upload.bin"),
         context,
     )
     upload.write(b"payload")
     upload.close()
 
     assert context.flock is False
-    captured = upload_store.all()
-    assert len(captured) == 1
-    assert captured[0].filename == "id=cam123/upload/env.txt"
-    assert captured[0].body == b"payload"
-    assert upload_store.by_client_id["cam123"][0] == captured[0]
+    assert upload_store.all()[0].body == b"payload"
+
+
+def test_dynamic_content_server_writes_static_uploads_to_disk(tmp_path):
+    upload_store = InMemoryUploadStore(InMemorySessionStore())
+    server = DynamicContentServer(
+        address="127.0.0.1",
+        port=6969,
+        retries=3,
+        timeout=5,
+        provider=CallableContentProvider(lambda request: ContentResult.from_bytes(b"")),
+        upload_store=upload_store,
+        tftproot=tmp_path,
+        server_factory=FakeTftpServer,
+    )
+
+    class Context:
+        host = "127.0.0.1"
+        port = 12345
+        flock = True
+
+    upload = server._open_upload(str(tmp_path / "plain.txt"), Context())
+    upload.write(b"payload")
+    upload.close()
+
+    assert (tmp_path / "plain.txt").read_bytes() == b"payload"
+    assert upload_store.all() == []
 
 
 def test_dynamic_content_server_run_delegates_to_tftpy_listen(tmp_path):
@@ -91,6 +122,7 @@ def test_dynamic_content_server_run_delegates_to_tftpy_listen(tmp_path):
         retries=7,
         timeout=9,
         provider=CallableContentProvider(lambda request: ContentResult.from_bytes(b"")),
+        upload_store=InMemoryUploadStore(InMemorySessionStore()),
         tftproot=tmp_path,
         server_factory=factory,
     )

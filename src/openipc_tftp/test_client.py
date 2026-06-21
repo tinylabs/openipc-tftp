@@ -1,18 +1,46 @@
-"""System-tftp based client for exercising multi-round-trip daemon flows."""
+"""Small helper for inspecting images and simulating U-Boot TFTP flows."""
 
 from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from tftpy import TftpClient
+
 from .mkimage import extract_script_payload
 
-TFTP_REMOTE_RE = re.compile(r'"[^"]*:(id=[^"]*)"')
-UBOOT_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+UPLOAD_RE = re.compile(
+    r"\b(?P<command>[A-Za-z0-9_]+)\s+\$\{[^}]+\}\s+(?P<size>\d+)\s+"
+    r'"(?P<server>[^":]+):(?P<remote>id=[^"]+)"'
+)
+DOWNLOAD_RE = re.compile(
+    r"\b(?P<command>[A-Za-z0-9_]+)\s+\$\{[^}]+\}\s+"
+    r'"(?P<server>[^":]+):(?P<remote>id=[^"]+)"'
+)
+
+
+@dataclass(frozen=True)
+class UploadAction:
+    command: str
+    server: str
+    remote: str
+    size: int
+
+
+@dataclass(frozen=True)
+class DownloadAction:
+    command: str
+    server: str
+    remote: str
+
+
+@dataclass(frozen=True)
+class FlowActions:
+    uploads: tuple[UploadAction, ...]
+    downloads: tuple[DownloadAction, ...]
 
 
 @dataclass(frozen=True)
@@ -22,80 +50,77 @@ class ClientConfig:
     client_id: str
     path: str
     rounds: int
-    env: dict[str, str]
-    target_env: dict[str, str]
+    timeout: int
+    retries: int
     keep_dir: Path | None
-    tftp_binary: str
+    dummy_byte: int
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Exercise openipc-tftp RRQ/WRQ loops with the system tftp client."
+        description="Extract a U-Boot script image or simulate a U-Boot TFTP flow."
     )
-    parser.add_argument("host", help="TFTP server host.")
-    parser.add_argument("--port", default=6969, type=int, help="TFTP server port.")
-    parser.add_argument("--id", required=True, dest="client_id", help="Client id= value.")
+    parser.add_argument(
+        "target",
+        help="Image path to extract or TFTP server host to simulate against.",
+    )
+    parser.add_argument("--id", dest="client_id", help="Session id=<ident> value.")
     parser.add_argument(
         "--path",
-        default="/",
-        help="Initial path after id=<id>. Example: /bootstrap or /boot.",
+        default="/bootstrap",
+        help="Initial session path after id=<ident>.",
     )
+    parser.add_argument("--port", default=6969, type=int, help="TFTP server port.")
     parser.add_argument(
         "--rounds",
-        default=5,
+        default=10,
         type=int,
-        help="Maximum RRQ rounds to follow.",
+        help="Maximum RRQ rounds before stopping.",
     )
-    parser.add_argument(
-        "--env",
-        action="append",
-        default=[],
-        metavar="KEY=VALUE",
-        help="Variable used for script path substitution. Repeatable.",
-    )
-    parser.add_argument(
-        "--target-env",
-        action="append",
-        default=[],
-        metavar="KEY=VALUE",
-        help="Mock target U-Boot env uploaded when the server requests get_env().",
-    )
-    parser.add_argument(
-        "--target-env-file",
-        type=Path,
-        help="File containing KEY=VALUE lines to upload for get_env().",
-    )
+    parser.add_argument("--timeout", default=5, type=int, help="TFTP timeout.")
+    parser.add_argument("--retries", default=3, type=int, help="TFTP retries.")
     parser.add_argument(
         "--keep-dir",
         type=Path,
-        help="Keep downloaded scripts and generated upload files in this directory.",
+        help="Directory to keep downloaded script images.",
     )
     parser.add_argument(
-        "--tftp-binary",
-        default="tftp",
-        help="System tftp executable to call.",
+        "--dummy-byte",
+        default="X",
+        help="Single byte used to fill dummy WRQ payloads.",
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.client_id is None:
+        return extract_main(Path(args.target))
     config = ClientConfig(
-        host=args.host,
+        host=args.target,
         port=args.port,
         client_id=args.client_id,
         path=_normalize_path(args.path),
         rounds=args.rounds,
-        env=_client_env(args.client_id, _parse_pairs(args.env)),
-        target_env=_target_env(args.target_env, args.target_env_file),
+        timeout=args.timeout,
+        retries=args.retries,
         keep_dir=args.keep_dir,
-        tftp_binary=args.tftp_binary,
+        dummy_byte=_parse_dummy_byte(args.dummy_byte),
     )
     run_client(config)
     return 0
 
 
-def run_client(config: ClientConfig) -> None:
+def extract_main(image: Path) -> int:
+    print(extract_script(image).decode("utf-8", errors="replace"))
+    return 0
+
+
+def extract_script(image: Path) -> bytes:
+    return extract_script_payload(image.read_bytes())
+
+
+def run_client(config: ClientConfig, client_factory=TftpClient) -> None:
     if config.keep_dir is not None:
         config.keep_dir.mkdir(parents=True, exist_ok=True)
         workdir = _StaticWorkdir(config.keep_dir)
@@ -104,30 +129,115 @@ def run_client(config: ClientConfig) -> None:
 
     with workdir as directory_name:
         directory = Path(directory_name)
-        remote = _remote_filename(config.client_id, config.path)
+        remote = f"id={config.client_id}{config.path}"
         for round_number in range(1, config.rounds + 1):
-            download_path = directory / f"round-{round_number}.scr.uimg"
+            image_path = directory / f"round-{round_number}.uimg"
             print(f"RRQ {round_number}: {remote}")
-            _tftp_get(config, remote, download_path)
-            script = extract_script_payload(download_path.read_bytes()).decode(
-                "utf-8",
-                errors="replace",
-            )
-            print(_indent(script.rstrip()))
+            _download(client_factory, config, remote, image_path)
+            script = extract_script(image_path).decode("utf-8", errors="replace")
+            _print_script(script)
+            actions = parse_flow_actions(script)
+            _echo_non_transfer_commands(script)
 
-            upload_remote = _find_upload_remote(script, config.env)
-            if upload_remote is not None:
-                upload_path = directory / f"round-{round_number}-env.txt"
-                upload_path.write_text(_env_text(config.target_env))
-                print(f"WRQ {round_number}: {upload_remote}")
-                _tftp_put(config, upload_path, upload_remote)
+            if actions.uploads:
+                for upload in actions.uploads:
+                    print(
+                        f"WRQ {round_number}: {upload.remote} "
+                        f"({upload.size} bytes via {upload.command})"
+                    )
+                    _upload_dummy(client_factory, config, upload)
+                next_remote = choose_next_remote(actions, prefer_recv="ok")
+            else:
+                next_remote = choose_next_remote(actions)
 
-            next_remote = _find_continue_remote(script, config.env)
             if next_remote is None:
-                print("No follow-up RRQ found; stopping.")
+                print("No continuation RRQ found; stopping.")
                 return
             remote = next_remote
+
         print(f"Stopped after {config.rounds} rounds.")
+
+
+def parse_flow_actions(script: str) -> FlowActions:
+    uploads = tuple(
+        UploadAction(
+            command=match.group("command"),
+            server=match.group("server"),
+            remote=match.group("remote"),
+            size=int(match.group("size")),
+        )
+        for match in UPLOAD_RE.finditer(script)
+    )
+    upload_remotes = {upload.remote for upload in uploads}
+    downloads = tuple(
+        DownloadAction(
+            command=match.group("command"),
+            server=match.group("server"),
+            remote=match.group("remote"),
+        )
+        for match in DOWNLOAD_RE.finditer(script)
+        if match.group("remote") not in upload_remotes
+    )
+    return FlowActions(uploads=uploads, downloads=downloads)
+
+
+def choose_next_remote(actions: FlowActions, prefer_recv: str | None = None) -> str | None:
+    if prefer_recv is not None:
+        marker = f"/recv={prefer_recv}"
+        for download in actions.downloads:
+            if marker in download.remote:
+                return download.remote
+    return actions.downloads[0].remote if actions.downloads else None
+
+
+def _download(client_factory, config: ClientConfig, remote: str, output: Path) -> None:
+    client = client_factory(config.host, port=config.port)
+    client.download(remote, str(output), timeout=config.timeout, retries=config.retries)
+
+
+def _upload_dummy(client_factory, config: ClientConfig, upload: UploadAction) -> None:
+    payload = bytes([config.dummy_byte]) * upload.size
+    client = client_factory(config.host, port=config.port)
+    with tempfile.NamedTemporaryFile("w+b") as fileobj:
+        fileobj.write(payload)
+        fileobj.flush()
+        fileobj.seek(0)
+        client.upload(
+            upload.remote,
+            fileobj,
+            timeout=config.timeout,
+            retries=config.retries,
+        )
+
+
+def _print_script(script: str) -> None:
+    print("Script:")
+    for line in script.rstrip().splitlines():
+        print(f"  {line}")
+    if not script.strip():
+        print("  <empty>")
+
+
+def _echo_non_transfer_commands(script: str) -> None:
+    for line in script.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if "id=" in stripped and ('"' in stripped or "'" in stripped):
+            continue
+        print(f"CMD: {stripped}")
+
+
+def _normalize_path(path: str) -> str:
+    if not path:
+        return "/"
+    return path if path.startswith("/") else f"/{path}"
+
+
+def _parse_dummy_byte(value: str) -> int:
+    if len(value) != 1:
+        raise SystemExit("--dummy-byte must be exactly one character")
+    return ord(value)
 
 
 class _StaticWorkdir:
@@ -139,126 +249,6 @@ class _StaticWorkdir:
 
     def __exit__(self, *args: object) -> None:
         return None
-
-
-def _tftp_get(config: ClientConfig, remote: str, local: Path) -> None:
-    _run_tftp(config, "get", remote, local)
-
-
-def _tftp_put(config: ClientConfig, local: Path, remote: str) -> None:
-    _run_tftp(config, "put", remote, local)
-
-
-def _run_tftp(config: ClientConfig, operation: str, remote: str, local: Path) -> None:
-    command = [
-        config.tftp_binary,
-        config.host,
-        str(config.port),
-        "-m",
-        "binary",
-        "-c",
-        operation,
-    ]
-    if operation == "get":
-        command.extend((remote, str(local)))
-    else:
-        command.extend((str(local), remote))
-    try:
-        subprocess.run(command, check=True)
-    except FileNotFoundError as error:
-        raise SystemExit(f"tftp binary not found: {config.tftp_binary}") from error
-    except subprocess.CalledProcessError as error:
-        raise SystemExit(f"tftp {operation} failed with exit code {error.returncode}") from error
-
-
-def _find_upload_remote(script: str, env: dict[str, str]) -> str | None:
-    for remote in _remote_paths(script, env):
-        if "/upload/" in remote:
-            return remote
-    return None
-
-
-def _find_continue_remote(script: str, env: dict[str, str]) -> str | None:
-    for remote in _remote_paths(script, env):
-        if "/upload/" not in remote:
-            return remote
-    return None
-
-
-def _remote_paths(script: str, env: dict[str, str]) -> list[str]:
-    paths = []
-    for match in TFTP_REMOTE_RE.finditer(script):
-        paths.append(_substitute_uboot_vars(match.group(1), env))
-    return paths
-
-
-def _substitute_uboot_vars(value: str, env: dict[str, str]) -> str:
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
-        if name not in env:
-            raise SystemExit(f"script referenced ${{{name}}}; pass --env {name}=VALUE")
-        return env[name]
-
-    return UBOOT_VAR_RE.sub(replace, value)
-
-
-def _remote_filename(client_id: str, path: str) -> str:
-    return f"id={client_id}{path}"
-
-
-def _normalize_path(path: str) -> str:
-    if not path:
-        return "/"
-    return path if path.startswith("/") else f"/{path}"
-
-
-def _client_env(client_id: str, values: dict[str, str]) -> dict[str, str]:
-    return dict(values)
-
-
-def _target_env(values: list[str], path: Path | None) -> dict[str, str]:
-    env = {
-        "bootcmd": "boot",
-        "ethaddr": "02:11:22:33:44:55",
-        "hostname": "testcam",
-        "ipaddr": "192.168.1.50",
-        "serverip": "192.168.1.10",
-    }
-    if path is not None:
-        env.update(_parse_env_file(path))
-    env.update(_parse_pairs(values))
-    return env
-
-
-def _parse_env_file(path: Path) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        env[key] = value
-    return env
-
-
-def _parse_pairs(values: list[str]) -> dict[str, str]:
-    parsed: dict[str, str] = {}
-    for value in values:
-        key, separator, item_value = value.partition("=")
-        if not separator or not key:
-            raise SystemExit(f"expected KEY=VALUE, got {value!r}")
-        parsed[key] = item_value
-    return parsed
-
-
-def _env_text(env: dict[str, str]) -> str:
-    return "".join(f"{key}={value}\n" for key, value in sorted(env.items()))
-
-
-def _indent(value: str) -> str:
-    if not value:
-        return "  <empty script>"
-    return "\n".join(f"  {line}" for line in value.splitlines())
 
 
 if __name__ == "__main__":

@@ -31,8 +31,6 @@ class ImageCompression(enum.IntEnum):
 
 @dataclass(frozen=True)
 class LegacyScriptImageCompiler:
-    """Compile text into a U-Boot legacy script image."""
-
     name: str = "openipc-tftp"
     arch: ImageArch = ImageArch.ARM
     os: ImageOS = ImageOS.LINUX
@@ -80,14 +78,10 @@ class LegacyScriptImageCompiler:
 
     @staticmethod
     def _script_payload(script: bytes) -> bytes:
-        # U-Boot legacy script images use the multi-file payload layout:
-        # one big-endian size entry per component, a zero terminator, then data.
         return struct.pack(">II", len(script), 0) + script
 
 
 def extract_script_payload(image: bytes) -> bytes:
-    """Return the script text from a U-Boot legacy script image."""
-
     payload = image[64:]
     if len(payload) < 8:
         raise ValueError("image is too short to contain a script payload")

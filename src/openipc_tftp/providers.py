@@ -13,8 +13,6 @@ ServerAddress = tuple[str, int] | tuple[str, int, int, int]
 
 @dataclass(frozen=True)
 class ContentRequest:
-    """Information available when an RRQ filename is resolved."""
-
     filename: str
     peer: PeerAddress
     server_addr: ServerAddress
@@ -23,17 +21,17 @@ class ContentRequest:
 
 @dataclass(frozen=True)
 class ContentResult:
-    """Content returned by a dynamic provider."""
-
     body: bytes | BinaryIO
     size: int | None = None
     close_body: bool = True
 
     @classmethod
-    def from_bytes(cls, body: bytes) -> ContentResult:
-        """Create a result from in-memory bytes."""
-
+    def from_bytes(cls, body: bytes) -> "ContentResult":
         return cls(body=body, size=len(body), close_body=False)
+
+    @classmethod
+    def from_text(cls, body: str, encoding: str = "utf-8") -> "ContentResult":
+        return cls.from_bytes(body.encode(encoding))
 
     @classmethod
     def from_stream(
@@ -42,26 +40,16 @@ class ContentResult:
         *,
         size: int | None = None,
         close_body: bool = True,
-    ) -> ContentResult:
-        """Create a result from a binary file-like object."""
-
+    ) -> "ContentResult":
         return cls(body=body, size=size, close_body=close_body)
 
 
 class DynamicContentProvider(Protocol):
-    """Protocol implemented by dynamic content backends."""
-
     def fetch(self, request: ContentRequest) -> ContentResult:
-        """Return content for the requested filename.
-
-        Raise FileNotFoundError when the requested filename cannot be resolved.
-        Other exceptions are reported by the TFTP transport as transfer errors.
-        """
+        """Resolve one TFTP RRQ."""
 
 
 class CallableContentProvider:
-    """Adapter for simple function-based providers."""
-
     def __init__(self, fetch: Callable[[ContentRequest], ContentResult]) -> None:
         self._fetch = fetch
 

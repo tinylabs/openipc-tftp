@@ -8,7 +8,6 @@ def test_callable_content_provider_delegates_to_function():
         server_addr=("127.0.0.1", 69),
         options={"mode": "octet"},
     )
-
     provider = CallableContentProvider(
         lambda req: ContentResult.from_bytes(req.filename.encode("ascii"))
     )

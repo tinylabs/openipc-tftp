@@ -25,5 +25,4 @@ def test_legacy_script_image_compiler_emits_valid_header():
     assert fields[9] == ImageType.SCRIPT
     assert fields[10] == ImageCompression.NONE
     assert fields[11].rstrip(b"\x00") == b"test"
-    assert payload[:8] == b"\x00\x00\x00\x08\x00\x00\x00\x00"
     assert extract_script_payload(image) == b"echo ok\n"

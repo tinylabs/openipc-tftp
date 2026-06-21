@@ -1,4 +1,4 @@
-"""tftpy server adapter for dynamic TFTP content."""
+"""tftpy adapter for the minimal session/static model."""
 
 from __future__ import annotations
 
@@ -6,29 +6,20 @@ import logging
 import os
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
 from tftpy import TftpServer
 
+from .protocol import parse_request_path
 from .providers import ContentRequest, ContentResult, DynamicContentProvider
-from .uploads import InMemoryUploadStore, UploadRequest, UploadStore
+from .uploads import InMemoryUploadStore, UploadRequest
 
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class TransferPeer:
-    host: str
-    port: int
-
-    def as_tuple(self) -> tuple[str, int]:
-        return (self.host, self.port)
-
-
 class DynamicContentServer:
-    """TFTP server that delegates RRQ and WRQ handling to package hooks."""
+    """TFTP server with session-aware RRQ/WRQ handling."""
 
     def __init__(
         self,
@@ -38,8 +29,8 @@ class DynamicContentServer:
         timeout: int,
         provider: DynamicContentProvider,
         *,
-        upload_store: UploadStore | None = None,
-        tftproot: str | os.PathLike[str] | None = None,
+        upload_store: InMemoryUploadStore,
+        tftproot: str | os.PathLike[str],
         server_factory: Callable[..., TftpServer] = TftpServer,
     ) -> None:
         self.address = address
@@ -47,15 +38,9 @@ class DynamicContentServer:
         self.retries = retries
         self.timeout = timeout
         self.provider = provider
-        self.upload_store = upload_store or InMemoryUploadStore()
-        self._owns_tftproot = tftproot is None
-        self._tempdir: tempfile.TemporaryDirectory[str] | None = None
-        if tftproot is None:
-            self._tempdir = tempfile.TemporaryDirectory(prefix="openipc-tftp-")
-            self.tftproot = self._tempdir.name
-        else:
-            self.tftproot = str(tftproot)
-            Path(self.tftproot).mkdir(parents=True, exist_ok=True)
+        self.upload_store = upload_store
+        self.tftproot = str(tftproot)
+        Path(self.tftproot).mkdir(parents=True, exist_ok=True)
         self._server = server_factory(
             tftproot=self.tftproot,
             dyn_file_func=self._open_dynamic_download,
@@ -74,9 +59,6 @@ class DynamicContentServer:
 
     def close(self, now: bool = True) -> None:
         self._server.stop(now=now)
-        if self._tempdir is not None:
-            self._tempdir.cleanup()
-            self._tempdir = None
 
     def _open_dynamic_download(
         self,
@@ -98,29 +80,42 @@ class DynamicContentServer:
         return fileobj_from_result(result)
 
     def _open_upload(self, path: str, context) -> BinaryIO | None:
-        # tftpy 0.8.7 accepts a flock argument on TftpServer but does not pass
-        # it through to TftpContextServer. Our upload sink is intentionally
-        # file-like rather than an OS file, so disable advisory locking here.
         context.flock = False
-        filename = self._relative_upload_filename(path)
+        filename = self._relative_path(path)
         request = UploadRequest(
             filename=filename,
             peer=(context.host, context.port),
             server_addr=(self.address, self.port),
         )
+        parsed = parse_request_path(filename)
         LOGGER.info(
             "Opening TFTP upload filename=%s peer=%s:%s",
-            request.filename,
+            filename,
             context.host,
             context.port,
         )
-        return self.upload_store.open(request)
+        if parsed.is_session:
+            return self.upload_store.open(request)
+        disk_path = _resolve_disk_upload_path(Path(self.tftproot), filename)
+        disk_path.parent.mkdir(parents=True, exist_ok=True)
+        return disk_path.open("w+b")
 
-    def _relative_upload_filename(self, path: str) -> str:
+    def _relative_path(self, path: str) -> str:
         try:
             return os.path.relpath(path, self.tftproot).replace(os.sep, "/")
         except ValueError:
             return path
+
+
+def _resolve_disk_upload_path(root: Path, filename: str) -> Path:
+    relative = Path(filename.lstrip("/"))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"unsafe upload filename: {filename!r}")
+    candidate = (root / relative).resolve()
+    root = root.resolve()
+    if root not in candidate.parents and candidate != root:
+        raise ValueError(f"unsafe upload filename: {filename!r}")
+    return candidate
 
 
 def fileobj_from_result(result: ContentResult) -> BinaryIO:

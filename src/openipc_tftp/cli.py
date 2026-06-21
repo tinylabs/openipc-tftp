@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
 
 from .config import DaemonConfig, load_daemon_config
+from .scripted import ScriptedSessionProvider
 from .server import DynamicContentServer
-from .scripted import ScriptedConfigProvider
-from .uploads import DiskUploadStore, InMemoryUploadStore
+from .sessions import InMemorySessionStore
+from .uploads import InMemoryUploadStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,13 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_server(config: DaemonConfig) -> DynamicContentServer:
     server_config = config.server
-    upload_dir = _resolve_config_path(
-        config,
-        server_config.get("upload_dir", server_config.get("upload")),
-    )
-    uploads = DiskUploadStore(upload_dir) if upload_dir else InMemoryUploadStore()
-    provider = ScriptedConfigProvider(config, upload_store=uploads)
-
+    sessions = InMemorySessionStore()
+    uploads = InMemoryUploadStore(sessions)
+    provider = ScriptedSessionProvider(config, sessions=sessions, upload_store=uploads)
     return DynamicContentServer(
         address=str(server_config.get("address", "::")),
         port=int(server_config.get("port", 6969)),
@@ -34,23 +30,15 @@ def build_server(config: DaemonConfig) -> DynamicContentServer:
         timeout=int(server_config.get("timeout", 5)),
         provider=provider,
         upload_store=uploads,
+        tftproot=config.static_root,
     )
-
-
-def _resolve_config_path(config: DaemonConfig, value: object) -> Path | None:
-    if not value:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return path
-    return config.path.parent / path
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_daemon_config(args.config)
     log_level = str(config.server.get("log_level", "INFO")).upper()
-    logging.basicConfig(level=getattr(logging, log_level))
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 
     server = build_server(config)
     try:
