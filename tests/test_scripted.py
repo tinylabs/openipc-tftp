@@ -3,6 +3,7 @@ from openipc_tftp.mkimage import extract_script_payload
 from openipc_tftp.providers import ContentRequest
 from openipc_tftp.scripted import ScriptedConfigProvider
 from openipc_tftp.uploads import InMemoryUploadStore, UploadRequest
+import pytest
 
 
 def script_from_result(result):
@@ -64,6 +65,68 @@ def test_scripted_provider_routes_by_client_id_and_passes_path(tmp_path):
     assert "default other123 /boot" in script_from_result(
         provider.fetch(request("id=other123/boot"))
     )
+
+
+def test_scripted_provider_serves_static_image_for_bare_rrq(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "def handler(uboot, ident, path):",
+                "    uboot.send_noreply('known')",
+                "",
+                "def default(uboot, ident, path):",
+                "    uboot.send_noreply('default')",
+            )
+        ),
+    )
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    payload = b"bare-static-image"
+    (images_dir / "uImage").write_bytes(payload)
+
+    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
+
+    result = provider.fetch(request("uImage"))
+    assert result.body == payload
+
+
+def test_scripted_provider_rejects_missing_bare_rrq_static_image(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "def handler(uboot, ident, path):",
+                "    uboot.send_noreply('known')",
+                "",
+                "def default(uboot, ident, path):",
+                "    uboot.send_noreply('default')",
+            )
+        ),
+    )
+    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
+
+    with pytest.raises(FileNotFoundError):
+        provider.fetch(request("missing.bin"))
+
+
+def test_scripted_provider_falls_back_to_default_when_static_image_is_missing(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "def handler(uboot, ident, path):",
+                "    uboot.send_noreply('known')",
+                "",
+                "def default(uboot, ident, path):",
+                "    uboot.send_noreply(f'default {ident} {path}')",
+            )
+        ),
+    )
+    provider = ScriptedConfigProvider(config, upload_store=InMemoryUploadStore())
+
+    script = script_from_result(provider.fetch(request("id=other123/missing.bin")))
+    assert "default other123 /missing.bin" in script
 
 
 def test_send_wraps_script_with_continue_rrq(tmp_path):

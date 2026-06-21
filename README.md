@@ -136,6 +136,13 @@ The first argument exposes:
   same `id=` and path.
 - `send_noreply(script)`: sends a script without appending another RRQ.
 
+If an incoming `id=` does not match any configured route, the `[default]`
+script function runs.
+
+If the RRQ filename does not start with `id=`, it is treated as a static-only
+request under `images/`. If the file is missing, the server returns the normal
+TFTP missing-file failure.
+
 Example U-Boot upload path used by `get_env()`:
 
 ```bash

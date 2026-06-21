@@ -66,11 +66,18 @@ class ScriptedConfigProvider(DynamicContentProvider):
         self.upload_store = upload_store
         self.compiler = compiler or LegacyScriptImageCompiler()
         self._module = _load_script_module(_script_path(config))
+        self._images_dir = config.path.parent / "images"
         self._env_upload_count: dict[str, int] = {}
         self._target_env: dict[str, dict[str, str]] = {}
 
     def fetch(self, request: ContentRequest) -> ContentResult:
-        message = parse_client_filename(request.filename)
+        try:
+            message = parse_client_filename(request.filename)
+        except ValueError:
+            image = self._static_image_result(_request_path(request.filename))
+            if image is not None:
+                return image
+            raise FileNotFoundError(request.filename)
         self._refresh_env(message.client_id)
         path = _message_path(message)
         handle = ClientHandle(provider=self, message=message, path=path)
@@ -142,6 +149,12 @@ class ScriptedConfigProvider(DynamicContentProvider):
     def _ramref(self) -> str:
         return _uboot_variable(self.config.env.get("ramvar", "baseaddr"))
 
+    def _static_image_result(self, path: str) -> ContentResult | None:
+        image_path = _resolve_static_path(self._images_dir, path)
+        if image_path is None or not image_path.is_file():
+            return None
+        return ContentResult.from_bytes(image_path.read_bytes())
+
 
 def _script_path(config: DaemonConfig) -> Path:
     value = config.server.get("scriptfile") or config.server.get("script")
@@ -168,6 +181,10 @@ def _message_path(message: ClientMessage) -> str:
     return "/" + "/".join(message.segments)
 
 
+def _request_path(filename: str) -> str:
+    return "/" + filename.strip("/")
+
+
 def _parse_env_export(body: bytes) -> dict[str, str]:
     env: dict[str, str] = {}
     text = body.decode("utf-8", errors="replace").replace("\0", "\n")
@@ -179,6 +196,19 @@ def _parse_env_export(body: bytes) -> dict[str, str]:
         if key:
             env[key] = value
     return env
+
+
+def _resolve_static_path(root: Path, path: str) -> Path | None:
+    relative = Path(path.lstrip("/"))
+    if not relative.parts:
+        return None
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = (root / relative).resolve()
+    root = root.resolve()
+    if candidate != root and root not in candidate.parents:
+        return None
+    return candidate
 
 
 def _uboot_variable(name: str) -> str:
