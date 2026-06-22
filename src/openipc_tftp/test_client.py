@@ -196,7 +196,7 @@ def _download(client_factory, config: ClientConfig, remote: str, output: Path) -
 
 
 def _upload_dummy(client_factory, config: ClientConfig, upload: UploadAction) -> None:
-    payload = bytes([config.dummy_byte]) * upload.size
+    payload = _build_dummy_env_export(config, upload.size)
     client = client_factory(config.host, port=config.port)
     with tempfile.NamedTemporaryFile("w+b") as fileobj:
         fileobj.write(payload)
@@ -238,6 +238,22 @@ def _parse_dummy_byte(value: str) -> int:
     if len(value) != 1:
         raise SystemExit("--dummy-byte must be exactly one character")
     return ord(value)
+
+
+def _build_dummy_env_export(config: ClientConfig, size: int) -> bytes:
+    text = "\0".join(
+        (
+            f"bootcmd=echo boot {config.client_id}",
+            f"ethaddr=02:00:00:00:00:{config.dummy_byte:02x}",
+            f"hostname={config.client_id}",
+            "ipaddr=192.168.1.50",
+            f"serverip={config.host}",
+        )
+    ) + "\0"
+    payload = text.encode("utf-8")
+    if len(payload) >= size:
+        return payload[:size]
+    return payload + (b"\0" * (size - len(payload)))
 
 
 class _StaticWorkdir:

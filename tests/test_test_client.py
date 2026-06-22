@@ -4,6 +4,7 @@ from openipc_tftp.test_client import (
     DownloadAction,
     FlowActions,
     UploadAction,
+    _build_dummy_env_export,
     choose_next_remote,
     main,
     parse_flow_actions,
@@ -61,7 +62,7 @@ def test_run_client_follows_rrq_wrq_flow(capsys, tmp_path):
         "\n".join(
             (
                 "echo first",
-                'if tftpput ${loadaddr} 4 "127.0.0.1:id=cam123/token=abc123/upload.bin"; '
+                'if tftpput ${loadaddr} 128 "127.0.0.1:id=cam123/token=abc123/upload.bin"; '
                 'then if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=ok"; '
                 'then source ${loadaddr}; fi else echo failed; fi',
             )
@@ -100,14 +101,15 @@ def test_run_client_follows_rrq_wrq_flow(capsys, tmp_path):
 
     run_client(config, client_factory=FakeClient)
 
+    expected_upload = _build_dummy_env_export(config, 128)
     assert transfers == [
         ("download", "id=cam123/bootstrap", None),
-        ("upload", "id=cam123/token=abc123/upload.bin", b"ZZZZ"),
+        ("upload", "id=cam123/token=abc123/upload.bin", expected_upload),
         ("download", "id=cam123/token=abc123/recv=ok", None),
     ]
     output = capsys.readouterr().out
     assert "RRQ 1: id=cam123/bootstrap" in output
-    assert "WRQ 1: id=cam123/token=abc123/upload.bin (4 bytes via tftpput)" in output
+    assert "WRQ 1: id=cam123/token=abc123/upload.bin (128 bytes via tftpput)" in output
     assert "No continuation RRQ found; stopping." in output
 
 

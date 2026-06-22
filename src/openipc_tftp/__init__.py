@@ -6,6 +6,7 @@ from .protocol import ParsedPath, parse_request_path
 from .providers import CallableContentProvider, ContentRequest, ContentResult
 from .scripted import ScriptedSessionProvider, SessionHandle
 from .sessions import ClientSession, InMemorySessionStore
+from .ubootenv import parse_env_export
 from .uploads import InMemoryUploadStore, UploadedFile, UploadRequest
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "InMemoryUploadStore",
     "LegacyScriptImageCompiler",
     "ParsedPath",
+    "parse_env_export",
     "ScriptRoute",
     "ScriptedSessionProvider",
     "SessionHandle",

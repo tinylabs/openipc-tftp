@@ -198,8 +198,9 @@ def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
             (
                 "async def handler(tftp, ident, cmd, env):",
                 "    data = await tftp.exec_recv(['echo send upload'], 8)",
+                "    parsed = tftp.parse_env_export(data)",
                 "    tftp.write_file('saved/dump.bin', data)",
-                "    await tftp.exec(['echo done'], final=True)",
+                "    await tftp.exec([f'echo done {parsed[\"ethaddr\"]}'], final=True)",
                 "",
                 "async def default(tftp, ident, cmd, env):",
                 "    await tftp.exec(['echo default'], final=True)",
@@ -225,12 +226,14 @@ def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
             server_addr=("127.0.0.1", 6969),
         )
     )
-    upload.write(b"firmware")
+    upload.write(b"ethaddr=00:11:22:33:44:55\x00")
     upload.close()
 
     second = script_from_result(provider.fetch(request(f"id=cam123/token={token}/recv=ok")))
-    assert "echo done" in second
-    assert (tmp_path / "static" / "saved" / "dump.bin").read_bytes() == b"firmware"
+    assert "echo done 00:11:22:33:44:55" in second
+    assert (tmp_path / "static" / "saved" / "dump.bin").read_bytes() == (
+        b"ethaddr=00:11:22:33:44:55\x00"
+    )
 
 
 def test_exec_recv_can_be_caught_by_user_script(tmp_path):

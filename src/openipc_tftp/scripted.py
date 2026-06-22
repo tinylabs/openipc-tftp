@@ -16,6 +16,7 @@ from .mkimage import LegacyScriptImageCompiler
 from .protocol import ParsedPath, parse_request_path
 from .providers import ContentRequest, ContentResult, DynamicContentProvider
 from .sessions import ClientSession, InMemorySessionStore, PendingReceive
+from .ubootenv import parse_env_export
 from .uploads import InMemoryUploadStore
 
 
@@ -104,6 +105,9 @@ class SessionHandle:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
         return target
+
+    def parse_env_export(self, body: bytes) -> dict[str, str]:
+        return parse_env_export(body)
 
 
 class ScriptedSessionProvider(DynamicContentProvider):

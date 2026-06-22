@@ -44,5 +44,7 @@ async def camera_bootstrap(tftp, ident: str, cmd: str, env: dict[str, str]):
         await tftp.exec(["echo upload failed"], final=True)
         return
 
+    env = tftp.parse_env_export(data)
+    print (env)
     tftp.write_file(f"uploads/{ident}-env.txt", data)
-    await tftp.exec(["echo bootstrap complete"], final=True)
+    await tftp.exec([f"echo bootstrap complete {env.get('ethaddr', '<unknown>')}"], final=True)
