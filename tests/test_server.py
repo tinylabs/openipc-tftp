@@ -1,4 +1,9 @@
 from openipc_tftp import CallableContentProvider, ContentResult
+from types import SimpleNamespace
+
+from tftpy.TftpPacketTypes import TftpPacketWRQ
+from tftpy.TftpStates import TftpServerState, TftpState
+
 from openipc_tftp.server import DynamicContentServer, fileobj_from_result
 from openipc_tftp.sessions import InMemorySessionStore, PendingReceive
 from openipc_tftp.uploads import InMemoryUploadStore
@@ -142,3 +147,45 @@ def test_fileobj_from_result_wraps_bytes():
 
     assert fileobj.read() == b"payload"
     assert isinstance(fileobj.fileno(), int)
+
+
+def test_tftpy_patch_accepts_timeout_option():
+    state = object.__new__(TftpState)
+
+    accepted = state.returnSupportedOptions({"blksize": "1024", "timeout": "7"})
+
+    assert accepted["blksize"] == "1024"
+    assert accepted["timeout"] == "7"
+
+
+def test_tftpy_patch_applies_timeout_to_server_context(tmp_path):
+    class FakeSocket:
+        def __init__(self):
+            self.timeout = None
+
+        def settimeout(self, value):
+            self.timeout = value
+
+    context = SimpleNamespace(
+        tidport=None,
+        options=None,
+        host="127.0.0.1",
+        port=12345,
+        root=str(tmp_path),
+        dyn_file_func=None,
+        upload_open=lambda path, context: None,
+        sock=FakeSocket(),
+        file_to_transfer=None,
+    )
+    state = TftpServerState(context)
+    pkt = TftpPacketWRQ()
+    pkt.filename = "upload.bin"
+    pkt.mode = "octet"
+    pkt.options = {"timeout": "11"}
+
+    sendoack = state.serverInitial(pkt, "127.0.0.1", 12345)
+
+    assert sendoack is True
+    assert context.options["timeout"] == "11"
+    assert context.timeout == 11
+    assert context.sock.timeout == 11

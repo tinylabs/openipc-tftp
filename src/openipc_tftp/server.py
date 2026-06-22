@@ -10,12 +10,60 @@ from pathlib import Path
 from typing import BinaryIO
 
 from tftpy import TftpServer
+from tftpy.TftpStates import TftpState, TftpServerState
 
 from .protocol import parse_request_path
 from .providers import ContentRequest, ContentResult, DynamicContentProvider
 from .uploads import InMemoryUploadStore, UploadRequest
 
 LOGGER = logging.getLogger(__name__)
+
+_TFTPY_TIMEOUT_PATCHED = False
+
+
+def _apply_tftpy_timeout_option_patch() -> None:
+    global _TFTPY_TIMEOUT_PATCHED
+    if _TFTPY_TIMEOUT_PATCHED:
+        return
+
+    original_return_supported = TftpState.returnSupportedOptions
+    original_server_initial = TftpServerState.serverInitial
+
+    def return_supported_options_with_timeout(self, options):
+        passthrough_options = {
+            key: value for key, value in options.items() if key != "timeout"
+        }
+        accepted = original_return_supported(self, passthrough_options)
+        timeout_value = options.get("timeout")
+        if timeout_value is None:
+            return accepted
+        try:
+            parsed_timeout = int(timeout_value)
+        except (TypeError, ValueError):
+            LOGGER.warning("Ignoring invalid TFTP timeout option %r", timeout_value)
+            return accepted
+        if parsed_timeout <= 0:
+            LOGGER.warning("Ignoring non-positive TFTP timeout option %r", timeout_value)
+            return accepted
+        accepted["timeout"] = str(parsed_timeout)
+        return accepted
+
+    def server_initial_with_timeout(self, pkt, raddress, rport):
+        sendoack = original_server_initial(self, pkt, raddress, rport)
+        timeout_value = self.context.options.get("timeout")
+        if timeout_value is None:
+            return sendoack
+        timeout_seconds = int(timeout_value)
+        self.context.timeout = timeout_seconds
+        self.context.sock.settimeout(timeout_seconds)
+        return sendoack
+
+    TftpState.returnSupportedOptions = return_supported_options_with_timeout
+    TftpServerState.serverInitial = server_initial_with_timeout
+    _TFTPY_TIMEOUT_PATCHED = True
+
+
+_apply_tftpy_timeout_option_patch()
 
 
 class DynamicContentServer:

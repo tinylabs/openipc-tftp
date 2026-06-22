@@ -61,7 +61,6 @@ def uboot_nor_erase(offset: int | str, size: int | str) -> str:
     return "\n".join(
         (
             "sf probe 0",
-            "sf lock 0",
             f"sf erase {_format_number(offset)} {_format_number(size)}",
         )
     )
@@ -82,7 +81,6 @@ def uboot_nor_read(
     return "\n".join(
         (
             "sf probe 0",
-            "sf lock 0",
             f"setexpr {addr_var} {base_expr} + {_format_number(ram_offset)}",
             f"sf read ${{{addr_var}}} {_format_number(nor_offset)} {_format_number(size)}",
             f"setenv {addr_var}",
@@ -105,7 +103,6 @@ def uboot_nor_write(
     return "\n".join(
         (
             "sf probe 0",
-            "sf lock 0",
             f"setexpr {addr_var} {base_expr} + {_format_number(ram_offset)}",
             f"sf write ${{{addr_var}}} {_format_number(nor_offset)} {_format_number(size)}",
             f"setenv {addr_var}",

@@ -219,7 +219,7 @@ def test_target_route_overrides_transport_env_for_new_session(tmp_path):
     next_token_match = TOKEN_RE.search(second)
     assert next_token_match is not None
     next_token = next_token_match.group(1)
-    assert f'nmrp ${{loadaddr}} 8 "127.0.0.1:id=cam123/token={next_token}/upload.bin"' in second
+    assert f'nmrp ${{loadaddr}} 0x8 "127.0.0.1:id=cam123/token={next_token}/upload.bin"' in second
 
 
 def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
@@ -247,7 +247,7 @@ def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
     token_match = TOKEN_RE.search(first)
     assert token_match is not None
     token = token_match.group(1)
-    assert f'tftpput ${{loadaddr}} 8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
+    assert f'tftpput ${{loadaddr}} 0x8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
     assert (
         f'tftpboot ${{loadaddr}} '
         f'"127.0.0.1:id=cam123/token={token}/recv=ok/filesize=${{filesize}}"' in first
@@ -303,7 +303,7 @@ def test_exec_recv_can_upload_from_relative_rambase_offset(tmp_path):
         if line.startswith("setexpr __openipc_tftp_recv_")
     )
     assert (
-        f'tftpput ${{{recv_tmp}}} 8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
+        f'tftpput ${{{recv_tmp}}} 0x8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
     )
     assert f"setenv {recv_tmp}" in first
 
@@ -457,7 +457,10 @@ def test_fetch_env_helper_exports_receives_and_parses_environment(tmp_path):
     second_token_match = TOKEN_RE.search(second)
     assert second_token_match is not None
     second_token = second_token_match.group(1)
-    assert f'tftpput ${{loadaddr}} 1235 "127.0.0.1:id=cam123/token={second_token}/upload.bin"' in second
+    assert (
+        f'tftpput ${{loadaddr}} 0x4d3 "127.0.0.1:id=cam123/token={second_token}/upload.bin"'
+        in second
+    )
 
     upload = uploads.open(
         UploadRequest(

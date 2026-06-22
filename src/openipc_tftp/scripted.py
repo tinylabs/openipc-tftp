@@ -288,6 +288,20 @@ class ScriptedSessionProvider(DynamicContentProvider):
         recv_status: str | None,
         return_keys: tuple[str, ...] = (),
     ) -> str:
+        command = self._continue_command(
+            session,
+            recv_status=recv_status,
+            return_keys=return_keys,
+        )
+        return _join_script_lines((script, command))
+
+    def _continue_command(
+        self,
+        session: ClientSession,
+        *,
+        recv_status: str | None,
+        return_keys: tuple[str, ...] = (),
+    ) -> str:
         if session.current_token is None:
             raise RuntimeError("missing continuation token")
         path = f"id={session.client_id}/token={session.current_token}"
@@ -300,7 +314,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
             f'then source ${{{session.env["rambase"]}}}; '
             'else echo "openipc-tftp: continuation RRQ failed"; fi'
         )
-        return _join_script_lines((script, command))
+        return command
 
     def _append_receive(
         self,
@@ -313,24 +327,25 @@ class ScriptedSessionProvider(DynamicContentProvider):
         if pending is None:
             raise RuntimeError("missing pending receive state")
         upload_remote = f"id={session.client_id}/token={pending.token}{pending.upload_path}"
-        success = self._append_continue(
-            script="",
+        success = self._continue_command(
             session=session,
             recv_status="ok",
             return_keys=return_keys,
         )
-        failure = self._append_continue(
-            script="",
+        failure = self._continue_command(
             session=session,
             recv_status="failed",
             return_keys=return_keys,
         )
         upload_address, prelude, cleanup = _receive_address(session, receive_offset)
         receive = (
-            f'if {session.env["cmdtftpput"]} {upload_address} {pending.size} '
-            f'"{session.server_ip}:{upload_remote}"; '
-            f"then {success} "
-            f"else {failure} fi"
+            f'if {session.env["cmdtftpput"]} {upload_address} {_format_uboot_number(pending.size)} '
+            f'"{session.server_ip}:{upload_remote}";\n'
+            f"then\n"
+            f"    {success}\n"
+            f"else\n"
+            f"    {failure}\n"
+            f"fi"
         )
         return _join_script_lines((script, prelude, receive, cleanup))
 

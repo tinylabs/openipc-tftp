@@ -24,11 +24,11 @@ def test_test_client_prints_extracted_script(tmp_path, capsys):
 def test_parse_flow_actions_finds_upload_and_continuation():
     script = "\n".join(
         (
-            "echo start",
-            'if tftpput ${loadaddr} 8 "127.0.0.1:id=cam123/token=abc123/upload.bin"; then '
-            'if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=ok"; '
-            "then source ${loadaddr}; fi "
-            'else if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=failed"; '
+                "echo start",
+                'if tftpput ${loadaddr} 0x8 "127.0.0.1:id=cam123/token=abc123/upload.bin"; then '
+                'if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=ok"; '
+                "then source ${loadaddr}; fi "
+                'else if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=failed"; '
             "then source ${loadaddr}; fi fi",
         )
     )
@@ -63,7 +63,7 @@ def test_run_client_follows_rrq_wrq_flow(capsys, tmp_path):
         "\n".join(
             (
                 "echo first",
-                'if tftpput ${loadaddr} 128 "127.0.0.1:id=cam123/token=abc123/upload.bin"; '
+                'if tftpput ${loadaddr} 0x80 "127.0.0.1:id=cam123/token=abc123/upload.bin"; '
                 'then if tftpboot ${loadaddr} "127.0.0.1:id=cam123/token=abc123/recv=ok"; '
                 'then source ${loadaddr}; fi else echo failed; fi',
             )

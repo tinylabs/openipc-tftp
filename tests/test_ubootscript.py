@@ -42,12 +42,11 @@ def test_uboot_memset_accepts_absolute_base_literal():
     assert " 0x82000000 + 0x10" in script
 
 
-def test_uboot_nor_erase_emits_probe_lock_and_erase():
+def test_uboot_nor_erase_emits_probe_and_erase():
     script = uboot_nor_erase(0x10000, 0x2000)
 
     assert script.splitlines() == [
         "sf probe 0",
-        "sf lock 0",
         "sf erase 0x10000 0x2000",
     ]
 
@@ -57,11 +56,10 @@ def test_uboot_nor_read_uses_relative_ram_offset_and_unsets_tmp():
 
     lines = script.splitlines()
     assert lines[0] == "sf probe 0"
-    assert lines[1] == "sf lock 0"
-    tmp_name = lines[2].split()[1]
-    assert lines[2] == f"setexpr {tmp_name} ${{loadaddr}} + 0x400"
-    assert lines[3] == f"sf read ${{{tmp_name}}} 0x10000 0x2000"
-    assert lines[4] == f"setenv {tmp_name}"
+    tmp_name = lines[1].split()[1]
+    assert lines[1] == f"setexpr {tmp_name} ${{loadaddr}} + 0x400"
+    assert lines[2] == f"sf read ${{{tmp_name}}} 0x10000 0x2000"
+    assert lines[3] == f"setenv {tmp_name}"
 
 
 def test_uboot_nor_write_uses_relative_ram_offset_and_unsets_tmp():
@@ -69,8 +67,7 @@ def test_uboot_nor_write_uses_relative_ram_offset_and_unsets_tmp():
 
     lines = script.splitlines()
     assert lines[0] == "sf probe 0"
-    assert lines[1] == "sf lock 0"
-    tmp_name = lines[2].split()[1]
-    assert lines[2] == f"setexpr {tmp_name} ${{loadaddr}} + 0x800"
-    assert lines[3] == f"sf write ${{{tmp_name}}} 0x20000 0x1000"
-    assert lines[4] == f"setenv {tmp_name}"
+    tmp_name = lines[1].split()[1]
+    assert lines[1] == f"setexpr {tmp_name} ${{loadaddr}} + 0x800"
+    assert lines[2] == f"sf write ${{{tmp_name}}} 0x20000 0x1000"
+    assert lines[3] == f"setenv {tmp_name}"

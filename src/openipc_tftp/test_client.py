@@ -13,7 +13,7 @@ from tftpy import TftpClient
 from .mkimage import extract_script_payload
 
 UPLOAD_RE = re.compile(
-    r"\b(?P<command>[A-Za-z0-9_]+)\s+\$\{[^}]+\}\s+(?P<size>\d+)\s+"
+    r"\b(?P<command>[A-Za-z0-9_]+)\s+\$\{[^}]+\}\s+(?P<size>0x[0-9A-Fa-f]+|\d+)\s+"
     r'"(?P<server>[^":]+):(?P<remote>id=[^"]+)"'
 )
 DOWNLOAD_RE = re.compile(
@@ -168,7 +168,7 @@ def parse_flow_actions(script: str) -> FlowActions:
             command=match.group("command"),
             server=match.group("server"),
             remote=match.group("remote"),
-            size=int(match.group("size")),
+            size=int(match.group("size"), 0),
         )
         for match in UPLOAD_RE.finditer(script)
     )
