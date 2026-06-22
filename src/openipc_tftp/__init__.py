@@ -7,6 +7,13 @@ from .providers import CallableContentProvider, ContentRequest, ContentResult
 from .scripted import ScriptedSessionProvider, SessionHandle
 from .sessions import ClientSession, InMemorySessionStore
 from .ubootenv import parse_env_export
+from .ubootscript import (
+    uboot_memcpy,
+    uboot_memset,
+    uboot_nor_erase,
+    uboot_nor_read,
+    uboot_nor_write,
+)
 from .uploads import InMemoryUploadStore, UploadedFile, UploadRequest
 
 __all__ = [
@@ -24,6 +31,11 @@ __all__ = [
     "ScriptRoute",
     "ScriptedSessionProvider",
     "SessionHandle",
+    "uboot_memcpy",
+    "uboot_memset",
+    "uboot_nor_erase",
+    "uboot_nor_read",
+    "uboot_nor_write",
     "UploadedFile",
     "UploadRequest",
     "extract_script_payload",

@@ -12,11 +12,11 @@ cmdtftp = "tftpboot"
 cmdtftpput = "tftpput"
 nfsserver = 'truenas.lan'
 rootfs = '/mnt/STORAGE/config/camera/boot/rootfs'
+kernel = 'uImage.${soc}'
 
-[cam123]
-script = "camera_bootstrap"
-rambase = "loadaddr"
-rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.cam123'
+#[cam123]
+#script = "camera_bootstrap"
+#rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.cam123'
 
 [default]
 script = "default"

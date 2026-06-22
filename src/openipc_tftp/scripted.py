@@ -30,6 +30,7 @@ class _ExecutionRequest:
     final: bool
     receive_size: int | None = None
     return_keys: tuple[str, ...] = ()
+    receive_offset: int | str | None = None
 
     @property
     def expects_upload(self) -> bool:
@@ -55,6 +56,10 @@ class SessionHandle:
     @property
     def ident(self) -> str:
         return self.session.client_id
+
+    @property
+    def server_ip(self) -> str:
+        return self.session.server_ip
 
     @property
     def rambase_var(self) -> str:
@@ -91,10 +96,11 @@ class SessionHandle:
     async def exec_recv(
         self,
         script: str | Iterable[str],
-        sz: int,
+        size: int,
         *,
         final: bool = False,
         keys: Iterable[str] = (),
+        offset: int | str | None = None,
     ) -> bytes:
         if final:
             raise ValueError("exec_recv(..., final=True) is not supported")
@@ -102,8 +108,9 @@ class SessionHandle:
             _ExecutionRequest(
                 script=_join_script_lines(script),
                 final=False,
-                receive_size=sz,
+                receive_size=size,
                 return_keys=_normalize_return_keys(keys),
+                receive_offset=offset,
             )
         )
         if result is None:
@@ -253,7 +260,12 @@ class ScriptedSessionProvider(DynamicContentProvider):
                 size=instruction.receive_size or 0,
             )
             session.phase = "await_upload"
-            script = self._append_receive(script, session, instruction.return_keys)
+            script = self._append_receive(
+                script,
+                session,
+                instruction.return_keys,
+                instruction.receive_offset,
+            )
         elif instruction.final:
             session.phase = "complete"
             self.sessions.discard(session.client_id)
@@ -295,6 +307,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
         script: str,
         session: ClientSession,
         return_keys: tuple[str, ...],
+        receive_offset: int | str | None,
     ) -> str:
         pending = session.pending_receive
         if pending is None:
@@ -312,13 +325,14 @@ class ScriptedSessionProvider(DynamicContentProvider):
             recv_status="failed",
             return_keys=return_keys,
         )
+        upload_address, prelude, cleanup = _receive_address(session, receive_offset)
         receive = (
-            f'if {session.env["cmdtftpput"]} ${{{session.env["rambase"]}}} {pending.size} '
+            f'if {session.env["cmdtftpput"]} {upload_address} {pending.size} '
             f'"{session.server_ip}:{upload_remote}"; '
             f"then {success} "
             f"else {failure} fi"
         )
-        return _join_script_lines((script, receive))
+        return _join_script_lines((script, prelude, receive, cleanup))
 
     def _route_for(self, client_id: str | None):
         return self.config.default if client_id is None else self.config.routes.get(
@@ -414,6 +428,27 @@ def _append_return_keys(path: str, keys: tuple[str, ...]) -> str:
     return path
 
 
+def _receive_address(
+    session: ClientSession,
+    offset: int | str | None,
+) -> tuple[str, str | None, str | None]:
+    if offset is None:
+        return (f'${{{session.env["rambase"]}}}', None, None)
+    tmp_name = _new_tmp_name("recv")
+    prelude = (
+        f"setexpr {tmp_name} ${{{session.env['rambase']}}} + "
+        f"{_format_uboot_number(offset)}"
+    )
+    cleanup = f"setenv {tmp_name}"
+    return (f"${{{tmp_name}}}", prelude, cleanup)
+
+
+def _format_uboot_number(value: int | str) -> str:
+    if isinstance(value, int):
+        return hex(value)
+    return value
+
+
 def _get_local_ip(peer_hint: str) -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try:
@@ -425,6 +460,10 @@ def _get_local_ip(peer_hint: str) -> str:
 
 def _new_token() -> str:
     return secrets.token_urlsafe(8)
+
+
+def _new_tmp_name(kind: str) -> str:
+    return f"__openipc_tftp_{kind}_{secrets.token_hex(4)}"
 
 
 class _ExecutionAwaitable:

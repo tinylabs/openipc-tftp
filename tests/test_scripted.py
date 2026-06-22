@@ -272,6 +272,42 @@ def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
     )
 
 
+def test_exec_recv_can_upload_from_relative_rambase_offset(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    await tftp.exec_recv(['echo send upload'], 8, offset=0x400)",
+                "    await tftp.exec(['echo done'], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
+    )
+
+    first = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
+    token_match = TOKEN_RE.search(first)
+    assert token_match is not None
+    token = token_match.group(1)
+    assert "setexpr __openipc_tftp_recv_" in first
+    assert " ${loadaddr} + 0x400" in first
+    recv_tmp = next(
+        line.split()[1]
+        for line in first.splitlines()
+        if line.startswith("setexpr __openipc_tftp_recv_")
+    )
+    assert (
+        f'tftpput ${{{recv_tmp}}} 8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
+    )
+    assert f"setenv {recv_tmp}" in first
+
+
 def test_exec_recv_can_be_caught_by_user_script(tmp_path):
     config = write_config(
         tmp_path,

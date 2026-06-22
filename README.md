@@ -38,6 +38,8 @@ When the client returns on the continuation RRQ, `exec_recv(...)` resumes and re
 
 If the upload fails and the client returns on the failure continuation path, `exec_recv(...)` raises `ReceiveFailedError`.
 
+`exec_recv(...)` also accepts `offset=...` to upload from `tftp.rambase + offset` instead of the base address itself.
+
 ## Config
 
 Example [`config.toml`](/home/elliot/work/openipc/openipc-tftp/config.toml:1):
@@ -101,6 +103,22 @@ async def camera_bootstrap(tftp, ident, cmd, env):
         return
 
     await tftp.exec([f"echo unknown cmd {cmd}"], final=True)
+```
+
+Example uploading from a RAM offset:
+
+```python
+async def dump_region(tftp, ident, cmd, env):
+    if cmd != "dump":
+        await tftp.exec(["echo unknown cmd"], final=True)
+        return
+
+    await tftp.exec_recv(
+        ["echo uploading memory region"],
+        0x1000,
+        offset=0x400,
+    )
+    await tftp.exec(["echo upload complete"], final=True)
 ```
 
 ## Static Files
