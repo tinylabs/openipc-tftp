@@ -121,6 +121,27 @@ class SessionHandle:
     def parse_env_export(self, body: bytes) -> dict[str, str]:
         return parse_env_export(body)
 
+    async def fetch_env(
+        self,
+        *,
+        export_script: str | Iterable[str] | None = None,
+        upload_script: str | Iterable[str] = ("echo uploading environment snapshot",),
+        size_key: str = "filesize",
+    ) -> dict[str, str]:
+        export_lines = (
+            export_script if export_script is not None else [f"env export -t {self.rambase}"]
+        )
+        await self.exec(export_lines, keys=[size_key])
+        size_text = self.env.get(size_key)
+        if size_text is None:
+            raise ValueError(f"missing {size_key!r} after environment export")
+        try:
+            size = int(size_text, 0)
+        except ValueError as error:
+            raise ValueError(f"invalid {size_key!r} value: {size_text!r}") from error
+        data = await self.exec_recv(upload_script, size)
+        return parse_env_export(data)
+
 
 class ScriptedSessionProvider(DynamicContentProvider):
     """Serve static files or dispatch session RRQs to user handlers."""

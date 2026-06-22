@@ -388,3 +388,52 @@ def test_transport_keys_are_removed_from_env_argument(tmp_path):
     assert "echo has_cmdtftp False" in script
     assert "echo has_cmdtftpput False" in script
     assert "echo user_value visible" in script
+
+
+def test_fetch_env_helper_exports_receives_and_parses_environment(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    exported = await tftp.fetch_env()",
+                "    await tftp.exec([f'echo ethaddr {exported[\"ethaddr\"]} {env[\"filesize\"]}'], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    uploads = InMemoryUploadStore(sessions)
+    provider = ScriptedSessionProvider(config, sessions=sessions, upload_store=uploads)
+
+    first = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
+    token_match = TOKEN_RE.search(first)
+    assert token_match is not None
+    token = token_match.group(1)
+    assert f"env export -t ${{loadaddr}}" in first
+    assert f'/filesize=${{filesize}}"' in first
+
+    second = script_from_result(
+        provider.fetch(request(f"id=cam123/token={token}/filesize=1235"))
+    )
+    second_token_match = TOKEN_RE.search(second)
+    assert second_token_match is not None
+    second_token = second_token_match.group(1)
+    assert f'tftpput ${{loadaddr}} 1235 "127.0.0.1:id=cam123/token={second_token}/upload.bin"' in second
+
+    upload = uploads.open(
+        UploadRequest(
+            filename=f"id=cam123/token={second_token}/upload.bin",
+            peer=("127.0.0.1", 12345),
+            server_addr=("127.0.0.1", 6969),
+        )
+    )
+    upload.write(b"ethaddr=00:11:22:33:44:55\x00")
+    upload.close()
+
+    third = script_from_result(
+        provider.fetch(request(f"id=cam123/token={second_token}/recv=ok"))
+    )
+    assert "echo ethaddr 00:11:22:33:44:55 1235" in third

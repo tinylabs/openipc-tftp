@@ -21,6 +21,7 @@ Session handlers are `async def` functions. They use these helpers:
 
 - `await tftp.exec(script, final=False)`
 - `await tftp.exec_recv(script, size)`
+- `await tftp.fetch_env()`
 - `tftp.write_file(path, body)`
 
 `exec(...)` sends a script to the client. If `final=False`, the server appends an internal continuation `tftpboot` so the session can continue on the next RRQ.
@@ -91,19 +92,11 @@ async def camera_bootstrap(tftp, ident, cmd, env):
         )
 
         try:
-            data = await tftp.exec_recv(
-                [
-                    "echo uploading environment snapshot",
-                    f"env export -t {tftp.rambase}",
-                ],
-                4096,
-            )
+            env = await tftp.fetch_env()
         except ReceiveFailedError:
             await tftp.exec(["echo upload failed"], final=True)
             return
 
-        env = tftp.parse_env_export(data)
-        tftp.write_file(f"uploads/{ident}-env.txt", data)
         await tftp.exec([f"echo bootstrap complete {env.get('ethaddr', '<unknown>')}"], final=True)
         return
 
