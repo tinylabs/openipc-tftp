@@ -2,7 +2,7 @@
 scriptfile = "script.py"
 root = "files"
 address = "0.0.0.0"
-port = 6969
+port = 69
 timeout = 5
 retries = 3
 
@@ -15,7 +15,7 @@ rootfs = '/mnt/STORAGE/config/camera/boot/rootfs'
 kernel = 'uImage.${soc}'
 
 #[cam123]
-#script = "camera_bootstrap"
+#script = "bootnfs"
 #rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.cam123'
 
 [default]

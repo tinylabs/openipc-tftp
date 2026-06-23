@@ -102,6 +102,29 @@ def test_scripted_provider_serves_static_file_for_bare_rrq(tmp_path):
     assert result.body == b"bare-static-image"
 
 
+def test_session_handle_exposes_absolute_static_root(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    await tftp.exec([f'echo root {tftp.root}'], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config, sessions=sessions, upload_store=InMemoryUploadStore(sessions)
+    )
+
+    script = script_from_result(provider.fetch(request("id=cam123/boot")))
+
+    assert f"echo root {tmp_path / 'static'}" in script
+
+
 def test_exec_appends_internal_continuation_rrq(tmp_path):
     config = write_config(
         tmp_path,
@@ -270,6 +293,49 @@ def test_exec_recv_returns_uploaded_bytes_on_followup_rrq(tmp_path):
     assert (tmp_path / "static" / "saved" / "dump.bin").read_bytes() == (
         b"ethaddr=00:11:22:33:44:55\x00"
     )
+
+
+def test_file_exists_checks_relative_path_under_tftp_root(tmp_path):
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    tftp.write_file('saved/dump.bin', b'payload')",
+                "    missing = 'ok'",
+                "    unsafe = 'ok'",
+                "    try:",
+                "        tftp.read_file('missing.bin')",
+                "    except FileNotFoundError:",
+                "        missing = 'missing'",
+                "    try:",
+                "        tftp.read_file('../outside.bin')",
+                "    except ValueError:",
+                "        unsafe = 'unsafe'",
+                "    await tftp.exec([",
+                "        f'echo exists {tftp.file_exists(\"saved/dump.bin\")}',",
+                "        f'echo read {tftp.read_file(\"saved/dump.bin\").decode()}',",
+                "        f'echo missing_read {missing}',",
+                "        f'echo missing {tftp.file_exists(\"missing.bin\")}',",
+                "        f'echo unsafe {unsafe}',",
+                "    ], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(config, sessions=sessions, upload_store=InMemoryUploadStore(sessions))
+
+    script = script_from_result(provider.fetch(request("id=cam123/bootstrap")))
+
+    assert "echo exists True" in script
+    assert "echo read payload" in script
+    assert "echo missing_read missing" in script
+    assert "echo missing False" in script
+    assert "echo unsafe unsafe" in script
+    assert (tmp_path / "static" / "saved" / "dump.bin").read_bytes() == b"payload"
 
 
 def test_exec_recv_can_upload_from_relative_rambase_offset(tmp_path):

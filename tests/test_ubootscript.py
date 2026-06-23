@@ -1,4 +1,5 @@
 from openipc_tftp.ubootscript import (
+    uboot_fetch_static,
     uboot_memcpy,
     uboot_memset,
     uboot_nor_erase,
@@ -9,6 +10,7 @@ from openipc_tftp.ubootscript import (
 
 class FakeTftp:
     rambase = "${loadaddr}"
+    server_ip = "127.0.0.1"
 
 
 def test_uboot_memset_uses_session_rambase_and_unsets_tmp():
@@ -71,3 +73,19 @@ def test_uboot_nor_write_uses_relative_ram_offset_and_unsets_tmp():
     assert lines[1] == f"setexpr {tmp_name} ${{loadaddr}} + 0x800"
     assert lines[2] == f"sf write ${{{tmp_name}}} 0x20000 0x1000"
     assert lines[3] == f"setenv {tmp_name}"
+
+
+def test_uboot_fetch_static_uses_session_rambase_by_default():
+    script = uboot_fetch_static(FakeTftp(), "images/fw.bin")
+
+    assert script == 'tftpboot ${loadaddr} "127.0.0.1:images/fw.bin"'
+
+
+def test_uboot_fetch_static_uses_relative_offset_and_unsets_tmp():
+    script = uboot_fetch_static(FakeTftp(), "/images/fw.bin", offset=0x400)
+
+    lines = script.splitlines()
+    tmp_name = lines[0].split()[1]
+    assert lines[0] == f"setexpr {tmp_name} ${{loadaddr}} + 0x400"
+    assert lines[1] == f'tftpboot ${{{tmp_name}}} "127.0.0.1:images/fw.bin"'
+    assert lines[2] == f"setenv {tmp_name}"

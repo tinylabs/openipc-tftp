@@ -110,6 +110,29 @@ def uboot_nor_write(
     )
 
 
+def uboot_fetch_static(
+    tftp: Any,
+    filename: str,
+    *,
+    offset: int | str | None = None,
+    base: str | None = None,
+) -> str:
+    """Return a U-Boot snippet that downloads a static file into RAM."""
+
+    addr_var = _next_tmp("addr")
+    base_expr = _normalize_base(tftp, base)
+    remote_path = str(filename).lstrip("/")
+    if offset is None:
+        return f'tftpboot {tftp.rambase} "{tftp.server_ip}:{remote_path}"'
+    return "\n".join(
+        (
+            f"setexpr {addr_var} {base_expr} + {_format_number(offset)}",
+            f'tftpboot ${{{addr_var}}} "{tftp.server_ip}:{remote_path}"',
+            f"setenv {addr_var}",
+        )
+    )
+
+
 def _next_tmp(kind: str) -> str:
     return f"__openipc_tftp_{kind}_{next(_TMP_COUNTER)}"
 

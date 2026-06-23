@@ -69,6 +69,10 @@ class SessionHandle:
     def rambase(self) -> str:
         return f"${{{self.rambase_var}}}"
 
+    @property
+    def root(self) -> str:
+        return str(self.provider.static_root)
+
     def get_config(self, key: str, default: str | None = None) -> str:
         if default is not None:
             return self.session.env.get(key, default)
@@ -124,6 +128,18 @@ class SessionHandle:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
         return target
+
+    def file_exists(self, filename: str | Path) -> bool:
+        target = _resolve_static_path(self.provider.static_root, "/" + str(filename))
+        return bool(target is not None and target.exists())
+
+    def read_file(self, filename: str | Path) -> bytes:
+        target = _resolve_static_path(self.provider.static_root, "/" + str(filename))
+        if target is None:
+            raise ValueError(f"unsafe filename path: {filename!r}")
+        if not target.exists():
+            raise FileNotFoundError(f"missing file: {filename!r}")
+        return target.read_bytes()
 
     def parse_env_export(self, body: bytes) -> dict[str, str]:
         return parse_env_export(body)
