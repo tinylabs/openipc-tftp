@@ -86,9 +86,11 @@ def ubootenv_parse_part(partition: bytes) -> dict[str, str]:
     for header_size in (4, 5):
         if len(partition) <= header_size:
             continue
-        expected_crc = int.from_bytes(partition[:4], "big")
         payload = partition[header_size:]
-        if zlib.crc32(payload) & 0xFFFFFFFF != expected_crc:
+        payload_crc = zlib.crc32(payload) & 0xFFFFFFFF
+        expected_crc_be = int.from_bytes(partition[:4], "big")
+        expected_crc_le = int.from_bytes(partition[:4], "little")
+        if payload_crc not in (expected_crc_be, expected_crc_le):
             continue
         env = _parse_nul_delimited_env(payload)
         if env:
@@ -106,7 +108,7 @@ def ubootenv_build(
     *,
     size: int | None = None,
     flags: int | None = None,
-    pad_byte: int = 0xFF,
+    pad_byte: int = 0x00,
     encoding: str = "utf-8",
 ) -> bytes:
     """Build a CRC-prefixed U-Boot env image from key/value pairs."""
@@ -127,7 +129,7 @@ def ubootenv_build(
         data = payload + bytes([pad_byte]) * (data_size - len(payload))
 
     crc = zlib.crc32(data) & 0xFFFFFFFF
-    header = crc.to_bytes(4, "big")
+    header = crc.to_bytes(4, "little")
     if flags is not None:
         header += bytes([flags])
     return header + data
