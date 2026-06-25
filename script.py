@@ -3,26 +3,24 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from urllib.parse import quote
 from urllib.request import urlopen
 
-from openipc_tftp.ubootterm import *
 from openipc_tftp.ubootscript import *
+from openipc_tftp.ubootterm import *
 
 # Delay then run commands with a chance to break
 async def uboot_exec_delay(tftp, msg: str, secs: int, cmds: list, final: boot=False):
     await tftp.exec([
         f'echo "{RESTORE_CURSOR}{CLEAR_REGION}\\c"',
-        f'echo "{msg}"',
-        'echo ""',
         'echo "Enter Ctrl+C to cancel..."',
         f'echo {SAVE_CURSOR}'
     ])
     for _ in range (secs):
         await tftp.exec([
-            f'echo "{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}Executing in: {secs - _}s"',
+            f'echo "{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}{msg} in: {secs - _}s"',
             #'sleep 0.1'
         ])
     await tftp.exec([
@@ -72,9 +70,9 @@ def check_install_args (ip: str, ident: str, cmd: str, fw: str, base: str, env: 
     if 'soc' not in env:
         script.append (uboot_err ("Must pass soc=name"))
     if fw not in ('lite', 'ultimate'):
-        script.append (uboot_err (f"Invalid: fw={fw} - Only fw=lite\\|ultimate supported"))
+        script.append (uboot_err (f"Invalid: fw={fw} - Only fw=lite|ultimate supported"))
     if script:
-        script.append (uboot_err (f"ie: tftpboot {base} {ip}:id={ident}/{cmd}/vendor=goke/soc=gk7205v300/nor=16M/fw=lite\\; source {base}"))
+        script.append (uboot_err (f"ie: tftpboot {base} {ip}:id={ident}/{cmd}/vendor=goke/soc=gk7205v300/nor=16M/fw=lite; source {base}"))
     return script
 
 async def openipc_install(tftp, ident: str, cmd: str, env: dict[str, str]):
@@ -141,14 +139,14 @@ async def openipc_install(tftp, ident: str, cmd: str, env: dict[str, str]):
     # Print complete message
     await tftp.exec([
         uboot_msg(),
-        uboot_msg(f"Install finished for {ident}.", bold=True),
+        uboot_msg(f"Install finished for {ident}", bold=True),
         uboot_msg(f"------------------------------"),
         uboot_msg(f"Flash backup: {tftp.root}/{backup_filename}", bold=True),
         uboot_msg(f"Web UI: http://{env['ipaddr']}/", bold=True),
         uboot_msg(f"SSH: ssh root@{env['ipaddr']} (password: 12345)", bold=True),
-        uboot_msg("Support OpenIPC: https://opencollective.com/openipc/contribute", color=YELLOW, bold=True),
+        uboot_msg("Support OpenIPC: https://opencollective.com/openipc/contribute", color="yellow", bold=True),
     ])
-    await uboot_exec_delay (tftp, "Rebooting in 20 seconds...", 20, ['reset'], final=True)
+    await uboot_exec_delay (tftp, "Rebooting", 20, ['reset'], final=True)
 
 # Just boot camera
 async def boot(tftp, ident: str, cmd: str, env: dict[str, str]):
@@ -157,12 +155,11 @@ async def boot(tftp, ident: str, cmd: str, env: dict[str, str]):
         await tftp.exec ([
             uboot_term_reset(),
             uboot_err(f"openipc-tftp: No matching entry for: {ident}"),
-            uboot_msg(f"Add snippet to openipc-tftp config.toml:", color=YELLOW),
-            uboot_msg(f"  [{ident}]", color=YELLOW, bold=True),
-            uboot_msg(f"  script=<python function name>", color=YELLOW, bold=True),
+            uboot_msg(f"Add snippet to openipc-tftp config.toml:", color="yellow"),
+            uboot_msg(f"  [{ident}]", color="yellow", bold=True),
+            uboot_msg(f"  script=<python function name>", color="yellow", bold=True),
         ])
-        await uboot_exec_delay(tftp, f"Running normal boot in {delay}s",
-                               delay, ['boot'], final=True)
+        await uboot_exec_delay(tftp, f"Booting", delay, ['boot'], final=True)
     else:
         await tftp.exec ([
             uboot_term_reset(),
