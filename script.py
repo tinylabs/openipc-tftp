@@ -11,13 +11,14 @@ from urllib.request import urlopen
 from openipc_tftp.ubootscript import *
 from openipc_tftp.ubootterm import *
 
-# Delay then run commands with a chance to break
+# Delay then run commands with a chance for the user to break w/ CTRL+c
 async def uboot_exec_delay(tftp, msg: str, secs: int, cmds: list, final: boot=False):
     await tftp.exec([
         f'echo "{RESTORE_CURSOR}{CLEAR_REGION}\\c"',
         'echo "Enter Ctrl+C to cancel..."',
         f'echo {SAVE_CURSOR}'
     ])
+    # This isn't really seconds based but close enough on a normal LAN
     for _ in range (secs):
         await tftp.exec([
             f'echo "{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}{msg} in: {secs - _}s"',

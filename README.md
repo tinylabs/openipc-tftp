@@ -140,6 +140,43 @@ These map to files under `files/` when `root = "files"`.
 openipc-tftp config.toml
 ```
 
+## Extracting U-Boot Env
+
+You can inspect the effective U-Boot env from a full flash image directly:
+
+```bash
+openipc-tftp-env firmware.bin
+```
+
+When partition boundaries are known, pass them explicitly:
+
+```bash
+openipc-tftp-env firmware.bin --boot-size 0x40000 --env-offset 0x40000 --env-size 0x10000
+```
+
+For machine-readable output:
+
+```bash
+openipc-tftp-env firmware.bin --format json
+```
+
+You can also patch the env partition in a full flash image:
+
+```bash
+openipc-tftp-env firmware.bin \
+  --output firmware.patched.bin \
+  --set bootcmd='run custom' \
+  --set serverip=10.0.0.1
+```
+
+Or load the replacement env from a JSON object:
+
+```bash
+openipc-tftp-env firmware.bin \
+  --output firmware.patched.bin \
+  --env-json env.json
+```
+
 ## Simulated Client
 
 You can exercise the session flow without hardware:

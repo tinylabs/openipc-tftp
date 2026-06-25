@@ -16,7 +16,7 @@ from .mkimage import LegacyScriptImageCompiler
 from .protocol import ParsedPath, parse_request_path
 from .providers import ContentRequest, ContentResult, DynamicContentProvider
 from .sessions import ClientSession, InMemorySessionStore, PendingReceive
-from .ubootenv import parse_env_export
+from .ubootenv import ubootenv_parse_export
 from .uploads import InMemoryUploadStore
 
 
@@ -142,7 +142,7 @@ class SessionHandle:
         return target.read_bytes()
 
     def parse_env_export(self, body: bytes) -> dict[str, str]:
-        return parse_env_export(body)
+        return ubootenv_parse_export(body)
 
     async def fetch_env(
         self,
@@ -163,7 +163,7 @@ class SessionHandle:
         except ValueError as error:
             raise ValueError(f"invalid {size_key!r} value: {size_text!r}") from error
         data = await self.exec_recv(upload_script, size)
-        return parse_env_export(data)
+        return ubootenv_parse_export(data)
 
 
 class ScriptedSessionProvider(DynamicContentProvider):

@@ -6,7 +6,15 @@ from .protocol import ParsedPath, parse_request_path
 from .providers import CallableContentProvider, ContentRequest, ContentResult
 from .scripted import ScriptedSessionProvider, SessionHandle
 from .sessions import ClientSession, InMemorySessionStore
-from .ubootenv import parse_env_export
+from .ubootenv import (
+    EnvPartitionInfo,
+    ubootenv_build,
+    ubootenv_extract,
+    ubootenv_find,
+    ubootenv_parse_export,
+    ubootenv_parse_part,
+    ubootenv_patch,
+)
 from .ubootscript import (
     uboot_memcpy,
     uboot_memset,
@@ -23,14 +31,20 @@ __all__ = [
     "ContentResult",
     "DaemonConfig",
     "DynamicContentServer",
+    "EnvPartitionInfo",
+    "ubootenv_build",
+    "ubootenv_extract",
+    "ubootenv_find",
     "InMemorySessionStore",
     "InMemoryUploadStore",
     "LegacyScriptImageCompiler",
     "ParsedPath",
-    "parse_env_export",
+    "ubootenv_parse_export",
+    "ubootenv_parse_part",
     "ScriptRoute",
     "ScriptedSessionProvider",
     "SessionHandle",
+    "ubootenv_patch",
     "uboot_memcpy",
     "uboot_memset",
     "uboot_nor_erase",
