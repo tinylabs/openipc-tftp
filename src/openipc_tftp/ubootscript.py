@@ -9,6 +9,7 @@ from typing import Any
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_#.-]*$")
 _TMP_COUNTER = itertools.count(1)
 
+from openipc_tftp.ubootterm import RESTORE_CURSOR, CLEAR_REGION
 
 def uboot_memset(
     tftp: Any,
@@ -29,7 +30,6 @@ def uboot_memset(
             f"setenv {addr_var}",
         )
     )
-
 
 def uboot_memcpy(
     tftp: Any,
@@ -132,6 +132,33 @@ def uboot_fetch_static(
         )
     )
 
+def uboot_nor_gen_probe(
+    tftp: Any,
+    sz: int,
+    max_sz: int,
+    script: list[str] | None = None,
+    *,
+    known_good: int = 0,
+    offset: int = 0,
+    base: str | None = None,
+) -> list[str]:
+    """ Return uboot snippet to probe NOR and return size in 'size'"""
+
+    base_expr = _normalize_base(tftp, base)
+    if script is None:
+        script = []
+    if sz > max_sz:
+        script.append(f"setenv size {known_good:#x};\n")
+        return script
+    script.append(f"echo {RESTORE_CURSOR}{CLEAR_REGION}")
+    script.append(f"sf read {base_expr} {offset:#x} {sz:#x};\n")
+    script.append("if test $? -eq 1; then\n")
+    script.append(f"setenv size {known_good:#x};\n")
+    script.append("else\n")
+    uboot_nor_gen_probe(tftp, sz * 2, max_sz, script,
+                        known_good=sz, offset=offset, base=base)
+    script.append("fi;\n")
+    return script
 
 def _next_tmp(kind: str) -> str:
     return f"__openipc_tftp_{kind}_{next(_TMP_COUNTER)}"

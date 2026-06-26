@@ -21,6 +21,7 @@ from .ubootscript import (
     uboot_nor_erase,
     uboot_nor_read,
     uboot_nor_write,
+    uboot_nor_gen_probe,
 )
 from .uploads import InMemoryUploadStore, UploadedFile, UploadRequest
 
@@ -50,6 +51,7 @@ __all__ = [
     "uboot_nor_erase",
     "uboot_nor_read",
     "uboot_nor_write",
+    "uboot_nor_gen_probe",
     "UploadedFile",
     "UploadRequest",
     "extract_script_payload",
