@@ -1,5 +1,6 @@
 [server]
 scriptfile = "script.py"
+rootdir = "/absolute/path/to/files"
 upload = "/tmp/openipc-tftp-upload"
 address = "0.0.0.0"
 #port = 6969
@@ -15,10 +16,10 @@ nfsserver = "truenas.lan"
 nfsroot = "/mnt/STORAGE/config/cameras/boot"
 
 [camfront]
-script = "boot_nfs"
+entry_func = "boot_nfs"
 
 [cam-test]
-script = "test_script"
+entry_func = "test_script"
 
 [default]
-script = "default"
+entry_func = "default"

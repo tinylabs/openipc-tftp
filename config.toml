@@ -1,6 +1,6 @@
 [server]
 scriptfile = "script.py"
-root = "files"
+rootdir = "/home/elliot/work/openipc/openipc-tftp/files"
 address = "0.0.0.0"
 port = 69
 timeout = 5
@@ -15,8 +15,8 @@ rootfs = '/mnt/STORAGE/config/camera/boot/rootfs'
 kernel = 'uImage.${soc}'
 
 #[cam123]
-#script = "bootnfs"
+#entry_func = "bootnfs"
 #rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.cam123'
 
 [default]
-script = "default"
+entry_func = "default"

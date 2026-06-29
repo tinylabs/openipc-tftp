@@ -34,7 +34,7 @@ def write_config(tmp_path, script_body, route="handler"):
             (
                 "[server]",
                 'scriptfile = "script.py"',
-                'root = "static"',
+                f'rootdir = "{(tmp_path / "static").resolve()}"',
                 "",
                 "[env]",
                 'rambase = "loadaddr"',
@@ -42,10 +42,10 @@ def write_config(tmp_path, script_body, route="handler"):
                 'cmdtftpput = "tftpput"',
                 "",
                 "[cam123]",
-                f'script = "{route}"',
+                f'entry_func = "{route}"',
                 "",
                 "[default]",
-                'script = "default"',
+                'entry_func = "default"',
             )
         )
     )
@@ -207,7 +207,7 @@ def test_target_route_overrides_transport_env_for_new_session(tmp_path):
             (
                 "[server]",
                 'scriptfile = "script.py"',
-                'root = "static"',
+                f'rootdir = "{(tmp_path / "static").resolve()}"',
                 "",
                 "[env]",
                 'rambase = "baseaddr"',
@@ -215,14 +215,14 @@ def test_target_route_overrides_transport_env_for_new_session(tmp_path):
                 'cmdtftpput = "tftpput"',
                 "",
                 "[cam123]",
-                'script = "handler"',
+                'entry_func = "handler"',
                 'rambase = "loadaddr"',
                 'cmdtftp = "dhcp"',
                 'cmdtftpput = "nmrp"',
                 'extra = "route"',
                 "",
                 "[default]",
-                'script = "default"',
+                'entry_func = "default"',
             )
         )
     )

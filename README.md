@@ -47,7 +47,7 @@ Example [`config.toml`](/home/elliot/work/openipc/openipc-tftp/config.toml:1):
 ```toml
 [server]
 scriptfile = "script.py"
-root = "files"
+rootdir = "/absolute/path/to/files"
 address = "::"
 port = 6969
 timeout = 5
@@ -59,10 +59,10 @@ cmdtftp = "tftpboot"
 cmdtftpput = "tftpput"
 
 [cam123]
-script = "camera_bootstrap"
+entry_func = "camera_bootstrap"
 
 [default]
-script = "default"
+entry_func = "default"
 ```
 
 ## Script API
@@ -123,7 +123,11 @@ async def dump_region(tftp, ident, cmd, env):
 
 ## Static Files
 
-Files under `root` are served directly for bare RRQ requests and written directly for bare WRQ requests.
+Files under `rootdir` are served directly for bare RRQ requests and written directly for bare WRQ requests.
+
+`scriptfile` may be relative to the directory containing `config.toml`, or absolute. `rootdir` must be an absolute path.
+
+`--rootdir /absolute/path` overrides `[server].rootdir` from the TOML file.
 
 Example:
 
@@ -132,12 +136,13 @@ RRQ uImage
 WRQ backup.bin
 ```
 
-These map to files under `files/` when `root = "files"`.
+These map to files under `/absolute/path/to/files/` when `rootdir = "/absolute/path/to/files"`.
 
 ## Running
 
 ```bash
-openipc-tftp config.toml
+openipc-tftp --config config.toml
+openipc-tftp --config config.toml --rootdir /absolute/path/to/files
 ```
 
 ## Extracting U-Boot Env

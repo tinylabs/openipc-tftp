@@ -209,9 +209,9 @@ class ScriptedSessionProvider(DynamicContentProvider):
             parsed=parsed,
             request=request,
         )
-        function = getattr(self._module, route.script, None)
+        function = getattr(self._module, route.entry_func, None)
         if not callable(function):
-            raise ValueError(f"script function not found: {route.script}")
+            raise ValueError(f"script function not found: {route.entry_func}")
         handler = function(
             handle,
             parsed.client_id,

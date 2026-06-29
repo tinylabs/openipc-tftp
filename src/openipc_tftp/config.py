@@ -10,7 +10,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ScriptRoute:
-    script: str
+    entry_func: str
     env: dict[str, str]
 
 
@@ -25,15 +25,15 @@ class DaemonConfig:
     @property
     def static_root(self) -> Path:
         value = (
-            self.server.get("root")
+            self.server.get("rootdir")
             or self.server.get("static_root")
             or self.server.get("tftproot")
             or "."
         )
         path = Path(str(value))
-        if path.is_absolute():
-            return path
-        return (self.path.parent / path).resolve()
+        if not path.is_absolute():
+            raise ValueError("[server] rootdir must be an absolute path")
+        return path
 
     @property
     def script_path(self) -> Path:
@@ -46,19 +46,24 @@ class DaemonConfig:
         return (self.path.parent / path).resolve()
 
 
-def load_daemon_config(path: str | Path) -> DaemonConfig:
+def load_daemon_config(
+    path: str | Path, *, rootdir: str | Path | None = None
+) -> DaemonConfig:
     config_path = Path(path)
     data = _load_toml(config_path)
 
     server = dict(data.get("server", {}))
+    if rootdir is not None:
+        server["rootdir"] = str(rootdir)
+    _validate_server_paths(server)
     env = {str(key): str(value) for key, value in dict(data.get("env", {})).items()}
     _validate_base_env(env)
     default_section = dict(data.get("default", {}))
-    default_script = str(default_section.get("script", "default"))
+    default_entry_func = str(default_section.get("entry_func", "default"))
     default_env = {
         str(key): str(value)
         for key, value in default_section.items()
-        if str(key) != "script"
+        if str(key) != "entry_func"
     }
 
     routes: dict[str, ScriptRoute] = {}
@@ -66,13 +71,15 @@ def load_daemon_config(path: str | Path) -> DaemonConfig:
         if section in {"server", "env", "default"}:
             continue
         route = dict(values)
-        if "script" not in route:
-            raise ValueError(f"[{section}] must set script")
+        if "entry_func" not in route:
+            raise ValueError(f"[{section}] must set entry_func")
         route_env = {
-            str(key): str(value) for key, value in route.items() if str(key) != "script"
+            str(key): str(value)
+            for key, value in route.items()
+            if str(key) != "entry_func"
         }
         routes[str(section).lower()] = ScriptRoute(
-            script=str(route["script"]),
+            entry_func=str(route["entry_func"]),
             env=route_env,
         )
 
@@ -81,7 +88,7 @@ def load_daemon_config(path: str | Path) -> DaemonConfig:
         server=server,
         env=env,
         routes=routes,
-        default=ScriptRoute(script=default_script, env=default_env),
+        default=ScriptRoute(entry_func=default_entry_func, env=default_env),
     )
 
 
@@ -91,6 +98,14 @@ def _validate_base_env(env: dict[str, str]) -> None:
     if missing:
         names = ", ".join(missing)
         raise ValueError(f"[env] must define: {names}")
+
+
+def _validate_server_paths(server: dict[str, Any]) -> None:
+    root = server.get("rootdir") or server.get("static_root") or server.get("tftproot")
+    if root is None:
+        return
+    if not Path(str(root)).is_absolute():
+        raise ValueError("[server] rootdir must be an absolute path")
 
 
 def _load_toml(path: Path) -> dict[str, Any]:

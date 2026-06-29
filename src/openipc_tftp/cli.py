@@ -14,7 +14,15 @@ from .uploads import InMemoryUploadStore
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the openipc-tftp daemon.")
-    parser.add_argument("config", help="Path to the daemon TOML configuration file.")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to the daemon TOML configuration file.",
+    )
+    parser.add_argument(
+        "--rootdir",
+        help="Absolute path to override [server].rootdir from the config file.",
+    )
     return parser
 
 
@@ -36,7 +44,7 @@ def build_server(config: DaemonConfig) -> DynamicContentServer:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = load_daemon_config(args.config)
+    config = load_daemon_config(args.config, rootdir=args.rootdir)
     log_level = str(config.server.get("log_level", "INFO")).upper()
     logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 
