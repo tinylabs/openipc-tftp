@@ -52,6 +52,7 @@ address = "::"
 port = 6969
 timeout = 5
 retries = 3
+log_level = "INFO"
 
 [env]
 rambase = "loadaddr"
@@ -126,6 +127,8 @@ async def dump_region(tftp, ident, cmd, env):
 Files under `rootdir` are served directly for bare RRQ requests and written directly for bare WRQ requests.
 
 `scriptfile` may be relative to the directory containing `config.toml`, or absolute. `rootdir` must be an absolute path.
+
+`log_level` uses Python logging levels. At `INFO`, `uboot-tftp` logs one-line RRQ/WRQ open and completion summaries, while `tftpy`'s lower-level packet chatter is suppressed. Set `log_level = "DEBUG"` when you want the underlying `tftpy` transfer details too.
 
 `--rootdir /absolute/path` overrides `[server].rootdir` from the TOML file.
 

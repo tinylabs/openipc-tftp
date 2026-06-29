@@ -66,6 +66,58 @@ def _apply_tftpy_timeout_option_patch() -> None:
 _apply_tftpy_timeout_option_patch()
 
 
+class _TransferLogFile:
+    def __init__(
+        self,
+        fileobj: BinaryIO,
+        *,
+        action: str,
+        filename: str,
+        peer: tuple[str, int] | tuple[str, int, int, int],
+        expected_size: int | None = None,
+    ) -> None:
+        self._fileobj = fileobj
+        self._action = action
+        self._filename = filename
+        self._peer = peer
+        self._expected_size = expected_size
+        self._bytes = 0
+        self._logged = False
+
+    def read(self, size: int = -1):
+        chunk = self._fileobj.read(size)
+        self._bytes += _payload_length(chunk)
+        return chunk
+
+    def write(self, data):
+        written = self._fileobj.write(data)
+        self._bytes += written if isinstance(written, int) else _payload_length(data)
+        return written
+
+    def close(self) -> None:
+        if not self._logged:
+            total_bytes = self._expected_size if self._expected_size is not None else self._bytes
+            LOGGER.info(
+                "%s complete filename=%s peer=%s bytes=%s",
+                self._action,
+                self._filename,
+                _format_peer(self._peer),
+                total_bytes,
+            )
+            self._logged = True
+        self._fileobj.close()
+
+    def __enter__(self):
+        self._fileobj.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._fileobj.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str):
+        return getattr(self._fileobj, name)
+
+
 class DynamicContentServer:
     """TFTP server with session-aware RRQ/WRQ handling."""
 
@@ -115,6 +167,11 @@ class DynamicContentServer:
         raddress: str,
         rport: int,
     ) -> BinaryIO | None:
+        LOGGER.info(
+            "RRQ filename=%s peer=%s",
+            filename,
+            _format_peer((raddress, rport)),
+        )
         request = ContentRequest(
             filename=filename,
             peer=(raddress, rport),
@@ -124,8 +181,20 @@ class DynamicContentServer:
         try:
             result = self.provider.fetch(request)
         except FileNotFoundError:
+            LOGGER.info(
+                "RRQ miss filename=%s peer=%s",
+                filename,
+                _format_peer((raddress, rport)),
+            )
             return None
-        return fileobj_from_result(result)
+        fileobj = fileobj_from_result(result)
+        return _TransferLogFile(
+            fileobj,
+            action="RRQ",
+            filename=filename,
+            peer=(raddress, rport),
+            expected_size=result.size,
+        )
 
     def _open_upload(self, path: str, context) -> BinaryIO | None:
         context.flock = False
@@ -137,16 +206,25 @@ class DynamicContentServer:
         )
         parsed = parse_request_path(filename)
         LOGGER.info(
-            "Opening TFTP upload filename=%s peer=%s:%s",
+            "WRQ filename=%s peer=%s",
             filename,
-            context.host,
-            context.port,
+            _format_peer((context.host, context.port)),
         )
         if parsed.is_session:
-            return self.upload_store.open(request)
+            return _TransferLogFile(
+                self.upload_store.open(request),
+                action="WRQ",
+                filename=filename,
+                peer=(context.host, context.port),
+            )
         disk_path = _resolve_disk_upload_path(Path(self.tftproot), filename)
         disk_path.parent.mkdir(parents=True, exist_ok=True)
-        return disk_path.open("w+b")
+        return _TransferLogFile(
+            disk_path.open("w+b"),
+            action="WRQ",
+            filename=filename,
+            peer=(context.host, context.port),
+        )
 
     def _relative_path(self, path: str) -> str:
         try:
@@ -177,3 +255,16 @@ def fileobj_from_result(result: ContentResult) -> BinaryIO:
             result.body.close()
     fileobj.seek(0)
     return fileobj
+
+
+def _format_peer(peer: tuple[str, int] | tuple[str, int, int, int]) -> str:
+    return f"{peer[0]}:{peer[1]}"
+
+
+def _payload_length(payload: object) -> int:
+    if payload is None:
+        return 0
+    try:
+        return len(payload)
+    except TypeError:
+        return 0

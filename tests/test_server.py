@@ -50,6 +50,34 @@ def test_dynamic_content_server_passes_rrq_context_to_provider(tmp_path):
     assert fileobj.read() == b"ok"
 
 
+def test_dynamic_content_server_logs_rrq_summary(tmp_path, caplog):
+    server = DynamicContentServer(
+        address="127.0.0.1",
+        port=6969,
+        retries=3,
+        timeout=5,
+        provider=CallableContentProvider(lambda request: ContentResult.from_bytes(b"ok")),
+        upload_store=InMemoryUploadStore(InMemorySessionStore()),
+        tftproot=tmp_path,
+        server_factory=FakeTftpServer,
+    )
+
+    with caplog.at_level("INFO"):
+        fileobj = server._open_dynamic_download(
+            "camera/firmware.bin",
+            raddress="127.0.0.1",
+            rport=12345,
+        )
+        fileobj.read()
+        fileobj.close()
+
+    assert "RRQ filename=camera/firmware.bin peer=127.0.0.1:12345" in caplog.text
+    assert (
+        "RRQ complete filename=camera/firmware.bin peer=127.0.0.1:12345 bytes=2"
+        in caplog.text
+    )
+
+
 def test_dynamic_content_server_opens_expected_session_upload_sink(tmp_path):
     sessions = InMemorySessionStore()
     session = sessions.create("cam123")
@@ -85,6 +113,33 @@ def test_dynamic_content_server_opens_expected_session_upload_sink(tmp_path):
 
     assert context.flock is False
     assert upload_store.all()[0].body == b"payload"
+
+
+def test_dynamic_content_server_logs_wrq_summary(tmp_path, caplog):
+    upload_store = InMemoryUploadStore(InMemorySessionStore())
+    server = DynamicContentServer(
+        address="127.0.0.1",
+        port=6969,
+        retries=3,
+        timeout=5,
+        provider=CallableContentProvider(lambda request: ContentResult.from_bytes(b"")),
+        upload_store=upload_store,
+        tftproot=tmp_path,
+        server_factory=FakeTftpServer,
+    )
+
+    class Context:
+        host = "127.0.0.1"
+        port = 12345
+        flock = True
+
+    with caplog.at_level("INFO"):
+        upload = server._open_upload(str(tmp_path / "plain.txt"), Context())
+        upload.write(b"payload")
+        upload.close()
+
+    assert "WRQ filename=plain.txt peer=127.0.0.1:12345" in caplog.text
+    assert "WRQ complete filename=plain.txt peer=127.0.0.1:12345 bytes=7" in caplog.text
 
 
 def test_dynamic_content_server_writes_static_uploads_to_disk(tmp_path):
