@@ -148,12 +148,12 @@ def uboot_nor_gen_probe(
     if script is None:
         script = []
     if sz > max_sz:
-        script.append(f"setenv size {known_good:#x};\n")
+        script.append(f"size={known_good:#x};\n")
         return script
     script.append(f"echo {RESTORE_CURSOR}{CLEAR_REGION}")
     script.append(f"sf read {base_expr} {offset:#x} {sz:#x};\n")
     script.append("if test $? -eq 1; then\n")
-    script.append(f"setenv size {known_good:#x};\n")
+    script.append(f"size={known_good:#x};\n")
     script.append("else\n")
     uboot_nor_gen_probe(tftp, sz * 2, max_sz, script,
                         known_good=sz, offset=offset, base=base)

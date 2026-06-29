@@ -52,14 +52,22 @@ def uboot_term_reset() -> str:
     return _echo(f"{CLEAR_SCREEN}{RESTORE}{HOME_CURSOR}{SAVE_CURSOR}")
 
 
-def uboot_msg(msg: str = "", color: ColorName = "green", bold: bool = False) -> str:
+def uboot_msg(msg: str = "", color: ColorName = "green", bold: bool = False, nl: bool=True) -> str:
     """Return a U-Boot command that prints a formatted status message."""
 
+    nl = '' if nl else '\\c'
     return (
-        _echo(f"{RESTORE_CURSOR}{CLEAR_REGION}{_style(color, bold)}{msg}{RESTORE}")
+        _echo(f"{RESTORE_CURSOR}{CLEAR_REGION}{_style(color, bold)}{msg}{RESTORE}{nl}")
         + f"; {_echo(SAVE_CURSOR)}"
     )
 
+
+def _echo(value: str) -> str:
+    return f"echo {_quote(value)}"
+
+
+def _quote(value: str) -> str:
+    return '"' + value.replace('"', '\\"') + '"'
 
 def uboot_err(msg: str, color: ColorName = "red", bold: bool = True) -> str:
     """Return a U-Boot command that prints a formatted error message."""
@@ -76,14 +84,6 @@ def _style(color: ColorName, bold: bool) -> str:
     if bold:
         params.insert(0, "1")
     return f"\x1b[{';'.join(params)}m"
-
-
-def _echo(value: str) -> str:
-    return f"echo {_quote(value)}"
-
-
-def _quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 __all__ = [

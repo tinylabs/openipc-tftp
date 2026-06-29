@@ -62,6 +62,10 @@ class SessionHandle:
         return self.session.server_ip
 
     @property
+    def cmdtftp(self) -> str:
+        return self.session.env["cmdtftp"]
+
+    @property
     def rambase_var(self) -> str:
         return self.session.env["rambase"]
 
@@ -164,7 +168,6 @@ class SessionHandle:
             raise ValueError(f"invalid {size_key!r} value: {size_text!r}") from error
         data = await self.exec_recv(upload_script, size)
         return ubootenv_parse_export(data)
-
 
 class ScriptedSessionProvider(DynamicContentProvider):
     """Serve static files or dispatch session RRQs to user handlers."""

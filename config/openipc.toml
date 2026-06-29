@@ -1,0 +1,22 @@
+[server]
+scriptfile = "openipc.py"
+root = "files"
+address = "0.0.0.0"
+port = 69
+timeout = 5
+retries = 3
+
+[env]
+rambase = "baseaddr"
+cmdtftp = "tftpboot"
+cmdtftpput = "tftpput"
+nfsserver = 'truenas.lan'
+rootfs = '/mnt/STORAGE/config/camera/boot/rootfs'
+kernel = 'uImage.${soc}'
+
+#[cam123]
+#script = "bootnfs"
+#rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.cam123'
+
+[default]
+script = "default"
