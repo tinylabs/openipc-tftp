@@ -1,5 +1,5 @@
-from openipc_tftp.protocol import parse_request_path
-from openipc_tftp.sessions import InMemorySessionStore
+from uboot_tftp.protocol import parse_request_path
+from uboot_tftp.sessions import InMemorySessionStore
 
 
 def test_session_store_can_replace_session():

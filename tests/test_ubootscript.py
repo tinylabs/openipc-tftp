@@ -1,4 +1,4 @@
-from openipc_tftp.ubootscript import (
+from uboot_tftp.ubootscript import (
     uboot_fetch_static,
     uboot_memcpy,
     uboot_memset,
@@ -17,7 +17,7 @@ def test_uboot_memset_uses_session_rambase_and_unsets_tmp():
     script = uboot_memset(FakeTftp(), 0x100, 0xFF, 0x20)
 
     lines = script.splitlines()
-    assert lines[0].startswith("setexpr __openipc_tftp_addr_")
+    assert lines[0].startswith("setexpr __uboot_tftp_addr_")
     assert " ${loadaddr} + 0x100" in lines[0]
     tmp_name = lines[0].split()[1]
     assert lines[1] == f"mw.b ${{{tmp_name}}} 0xff 0x20"

@@ -13,7 +13,7 @@ from .uploads import InMemoryUploadStore
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the openipc-tftp daemon.")
+    parser = argparse.ArgumentParser(description="Run the uboot-tftp daemon.")
     parser.add_argument(
         "--config",
         required=True,

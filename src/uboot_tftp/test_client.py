@@ -126,7 +126,7 @@ def run_client(config: ClientConfig, client_factory=TftpClient) -> None:
         config.keep_dir.mkdir(parents=True, exist_ok=True)
         workdir = _StaticWorkdir(config.keep_dir)
     else:
-        workdir = tempfile.TemporaryDirectory(prefix="openipc-tftp-client-")
+        workdir = tempfile.TemporaryDirectory(prefix="uboot-tftp-client-")
 
     with workdir as directory_name:
         directory = Path(directory_name)

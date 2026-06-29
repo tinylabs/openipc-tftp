@@ -2,7 +2,7 @@ import gzip
 
 import pytest
 
-from openipc_tftp.ubootenv import (
+from uboot_tftp.ubootenv import (
     EnvPartitionInfo,
     extract_default_env_from_uboot,
     ubootenv_build,

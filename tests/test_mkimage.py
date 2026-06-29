@@ -1,7 +1,7 @@
 import struct
 import zlib
 
-from openipc_tftp.mkimage import (
+from uboot_tftp.mkimage import (
     IH_MAGIC,
     ImageCompression,
     ImageType,

@@ -2,8 +2,8 @@ import gzip
 import json
 import zlib
 
-from openipc_tftp.ubootenv import ubootenv_extract
-from openipc_tftp.ubootenv_cli import build_parser, main
+from uboot_tftp.ubootenv import ubootenv_extract
+from uboot_tftp.ubootenv_cli import build_parser, main
 
 DEFAULT_ENV = {
     "bootargs": "console=ttyAMA0,115200 root=/dev/mtdblock3",

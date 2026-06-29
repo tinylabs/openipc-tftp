@@ -1,12 +1,12 @@
-from openipc_tftp import CallableContentProvider, ContentResult
+from uboot_tftp import CallableContentProvider, ContentResult
 from types import SimpleNamespace
 
 from tftpy.TftpPacketTypes import TftpPacketWRQ
 from tftpy.TftpStates import TftpServerState, TftpState
 
-from openipc_tftp.server import DynamicContentServer, fileobj_from_result
-from openipc_tftp.sessions import InMemorySessionStore, PendingReceive
-from openipc_tftp.uploads import InMemoryUploadStore
+from uboot_tftp.server import DynamicContentServer, fileobj_from_result
+from uboot_tftp.sessions import InMemorySessionStore, PendingReceive
+from uboot_tftp.uploads import InMemoryUploadStore
 
 
 class FakeTftpServer:

@@ -1,5 +1,5 @@
-from openipc_tftp.cli import build_parser, build_server
-from openipc_tftp.config import load_daemon_config
+from uboot_tftp.cli import build_parser, build_server
+from uboot_tftp.config import load_daemon_config
 import pytest
 
 

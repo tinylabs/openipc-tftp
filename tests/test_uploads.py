@@ -1,7 +1,7 @@
 import pytest
 
-from openipc_tftp.sessions import InMemorySessionStore, PendingReceive
-from openipc_tftp.uploads import InMemoryUploadStore, UploadRequest
+from uboot_tftp.sessions import InMemorySessionStore, PendingReceive
+from uboot_tftp.uploads import InMemoryUploadStore, UploadRequest
 
 
 def test_in_memory_upload_store_captures_expected_session_upload():

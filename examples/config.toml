@@ -1,7 +1,7 @@
 [server]
 scriptfile = "script.py"
 rootdir = "/absolute/path/to/files"
-upload = "/tmp/openipc-tftp-upload"
+upload = "/tmp/uboot-tftp-upload"
 address = "0.0.0.0"
 #port = 6969
 port = 69

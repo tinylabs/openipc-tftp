@@ -9,7 +9,7 @@ from typing import Any
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_#.-]*$")
 _TMP_COUNTER = itertools.count(1)
 
-from openipc_tftp.ubootterm import RESTORE_CURSOR, CLEAR_REGION
+from uboot_tftp.ubootterm import RESTORE_CURSOR, CLEAR_REGION
 
 def uboot_memset(
     tftp: Any,
@@ -161,7 +161,7 @@ def uboot_nor_gen_probe(
     return script
 
 def _next_tmp(kind: str) -> str:
-    return f"__openipc_tftp_{kind}_{next(_TMP_COUNTER)}"
+    return f"__uboot_tftp_{kind}_{next(_TMP_COUNTER)}"
 
 
 def _normalize_base(tftp: Any, base: str | None) -> str:

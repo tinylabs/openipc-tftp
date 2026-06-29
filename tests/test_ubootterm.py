@@ -1,4 +1,4 @@
-from openipc_tftp.ubootterm import (
+from uboot_tftp.ubootterm import (
     ANSI_COLORS,
     uboot_err,
     uboot_msg,

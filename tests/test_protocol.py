@@ -1,6 +1,6 @@
 import pytest
 
-from openipc_tftp.protocol import parse_request_path
+from uboot_tftp.protocol import parse_request_path
 
 
 def test_parse_session_request_path():

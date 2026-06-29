@@ -1,6 +1,6 @@
 [server]
 scriptfile = "script.py"
-rootdir = "/home/elliot/work/openipc/openipc-tftp/files"
+rootdir = "/home/elliot/work/openipc/uboot-tftp/files"
 address = "0.0.0.0"
 port = 69
 timeout = 5

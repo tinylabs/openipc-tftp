@@ -1,4 +1,4 @@
-from openipc_tftp import CallableContentProvider, ContentRequest, ContentResult
+from uboot_tftp import CallableContentProvider, ContentRequest, ContentResult
 
 
 def test_callable_content_provider_delegates_to_function():

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Example handler module for openipc-tftp."""
+"""
+Example handler module for uboot-tftp.
+Implements installing openipc on ip cameras
+"""
 
 from __future__ import annotations
 
@@ -12,9 +15,9 @@ from urllib.parse import quote
 from urllib.request import build_opener, HTTPCookieProcessor, Request
 from http.cookiejar import CookieJar
 
-from openipc_tftp.ubootscript import *
-from openipc_tftp.ubootterm import *
-from openipc_tftp.ubootenv import *
+from uboot_tftp.ubootscript import *
+from uboot_tftp.ubootterm import *
+from uboot_tftp.ubootenv import *
 
 
 ###

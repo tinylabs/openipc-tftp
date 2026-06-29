@@ -331,7 +331,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
             f'if {session.env["cmdtftp"]} ${{{session.env["rambase"]}}} '
             f'"{session.server_ip}:{path}"; '
             f'then source ${{{session.env["rambase"]}}}; '
-            'else echo "openipc-tftp: continuation RRQ failed"; fi'
+            'else echo "uboot-tftp: continuation RRQ failed"; fi'
         )
         return command
 
@@ -381,7 +381,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
 
 
 def _load_script_module(path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location("openipc_tftp_user_script", path)
+    spec = importlib.util.spec_from_file_location("uboot_tftp_user_script", path)
     if spec is None or spec.loader is None:
         raise ValueError(f"unable to load script file: {path}")
     module = importlib.util.module_from_spec(spec)
@@ -504,7 +504,7 @@ def _new_token() -> str:
 
 
 def _new_tmp_name(kind: str) -> str:
-    return f"__openipc_tftp_{kind}_{secrets.token_hex(4)}"
+    return f"__uboot_tftp_{kind}_{secrets.token_hex(4)}"
 
 
 class _ExecutionAwaitable:

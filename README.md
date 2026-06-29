@@ -1,4 +1,4 @@
-# openipc-tftp
+# uboot-tftp
 
 Minimal session-aware TFTP server for OpenIPC and U-Boot style workflows.
 
@@ -70,7 +70,7 @@ entry_func = "default"
 Example [`script.py`](/home/elliot/work/openipc/openipc-tftp/script.py:1):
 
 ```python
-from openipc_tftp.scripted import ReceiveFailedError
+from uboot_tftp.scripted import ReceiveFailedError
 
 
 async def default(tftp, ident, cmd, env):
@@ -141,8 +141,8 @@ These map to files under `/absolute/path/to/files/` when `rootdir = "/absolute/p
 ## Running
 
 ```bash
-openipc-tftp --config config.toml
-openipc-tftp --config config.toml --rootdir /absolute/path/to/files
+uboot-tftp --config config.toml
+uboot-tftp --config config.toml --rootdir /absolute/path/to/files
 ```
 
 ## Extracting U-Boot Env
@@ -150,25 +150,25 @@ openipc-tftp --config config.toml --rootdir /absolute/path/to/files
 You can inspect the effective U-Boot env from a full flash image directly:
 
 ```bash
-openipc-tftp-env firmware.bin
+uboot-tftp-env firmware.bin
 ```
 
 When partition boundaries are known, pass them explicitly:
 
 ```bash
-openipc-tftp-env firmware.bin --boot-size 0x40000 --env-offset 0x40000 --env-size 0x10000
+uboot-tftp-env firmware.bin --boot-size 0x40000 --env-offset 0x40000 --env-size 0x10000
 ```
 
 For machine-readable output:
 
 ```bash
-openipc-tftp-env firmware.bin --format json
+uboot-tftp-env firmware.bin --format json
 ```
 
 You can also patch the env partition in a full flash image:
 
 ```bash
-openipc-tftp-env firmware.bin \
+uboot-tftp-env firmware.bin \
   --output firmware.patched.bin \
   --set bootcmd='run custom' \
   --set serverip=10.0.0.1
@@ -177,7 +177,7 @@ openipc-tftp-env firmware.bin \
 Or load the replacement env from a JSON object:
 
 ```bash
-openipc-tftp-env firmware.bin \
+uboot-tftp-env firmware.bin \
   --output firmware.patched.bin \
   --env-json env.json
 ```
@@ -187,7 +187,7 @@ openipc-tftp-env firmware.bin \
 You can exercise the session flow without hardware:
 
 ```bash
-openipc-tftp-client 127.0.0.1 --id cam123 --path /bootstrap
+uboot-tftp-client 127.0.0.1 --id cam123 --path /bootstrap
 ```
 
 The simulated client:
@@ -201,5 +201,5 @@ The simulated client:
 It also keeps the old image-extraction mode:
 
 ```bash
-openipc-tftp-client boot.uimg
+uboot-tftp-client boot.uimg
 ```

@@ -1,5 +1,5 @@
 [server]
-scriptfile = "openipc.py"
+scriptfile = "../scripts/openipc.py"
 rootdir = "/home/elliot/work/openipc/openipc-tftp/files"
 address = "0.0.0.0"
 port = 69

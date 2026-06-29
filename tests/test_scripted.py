@@ -1,12 +1,12 @@
 import pytest
 import re
 
-from openipc_tftp.config import load_daemon_config
-from openipc_tftp.mkimage import extract_script_payload
-from openipc_tftp.providers import ContentRequest
-from openipc_tftp.scripted import ScriptedSessionProvider
-from openipc_tftp.sessions import InMemorySessionStore
-from openipc_tftp.uploads import InMemoryUploadStore, UploadRequest
+from uboot_tftp.config import load_daemon_config
+from uboot_tftp.mkimage import extract_script_payload
+from uboot_tftp.providers import ContentRequest
+from uboot_tftp.scripted import ScriptedSessionProvider
+from uboot_tftp.sessions import InMemorySessionStore
+from uboot_tftp.uploads import InMemoryUploadStore, UploadRequest
 
 
 def script_from_result(result):
@@ -361,12 +361,12 @@ def test_exec_recv_can_upload_from_relative_rambase_offset(tmp_path):
     token_match = TOKEN_RE.search(first)
     assert token_match is not None
     token = token_match.group(1)
-    assert "setexpr __openipc_tftp_recv_" in first
+    assert "setexpr __uboot_tftp_recv_" in first
     assert " ${loadaddr} + 0x400" in first
     recv_tmp = next(
         line.split()[1]
         for line in first.splitlines()
-        if line.startswith("setexpr __openipc_tftp_recv_")
+        if line.startswith("setexpr __uboot_tftp_recv_")
     )
     assert (
         f'tftpput ${{{recv_tmp}}} 0x8 "127.0.0.1:id=cam123/token={token}/upload.bin"' in first
@@ -379,7 +379,7 @@ def test_exec_recv_can_be_caught_by_user_script(tmp_path):
         tmp_path,
         "\n".join(
             (
-                "from openipc_tftp.scripted import ReceiveFailedError",
+                "from uboot_tftp.scripted import ReceiveFailedError",
                 "",
                 "async def handler(tftp, ident, cmd, env):",
                 "    try:",

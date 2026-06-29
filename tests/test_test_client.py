@@ -1,5 +1,5 @@
-from openipc_tftp.mkimage import LegacyScriptImageCompiler
-from openipc_tftp.test_client import (
+from uboot_tftp.mkimage import LegacyScriptImageCompiler
+from uboot_tftp.test_client import (
     ClientConfig,
     DownloadAction,
     FlowActions,

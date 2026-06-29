@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example user script for the config-driven openipc-tftp daemon."""
+"""Example user script for the config-driven uboot-tftp daemon."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def _bootstrap_script(env: dict[str, str], ident: str, static: bool=False) -> st
                 "else run bootnorm; fi'"
             ),
             "saveenv",
-            f"echo 'Add {ident} to openipc-tftp config.toml'",
+            f"echo 'Add {ident} to uboot-tftp config.toml'",
             "reset"
         )
     )

@@ -31,7 +31,7 @@ class ImageCompression(enum.IntEnum):
 
 @dataclass(frozen=True)
 class LegacyScriptImageCompiler:
-    name: str = "openipc-tftp"
+    name: str = "uboot-tftp"
     arch: ImageArch = ImageArch.ARM
     os: ImageOS = ImageOS.LINUX
 
