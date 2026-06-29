@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from .ubootscript import uboot_memset, uboot_nor_gen_probe, uboot_nor_read
+from .ubootterm import uboot_msg, uboot_progress
 
 
 async def uboot_nor_download(
@@ -58,6 +59,44 @@ async def uboot_nor_probe(
         final=final,
     )
     return int(tftp.env[size_key], 0)
+
+
+async def uboot_exec_delay(
+    tftp: Any,
+    message: str,
+    seconds: int,
+    cmds: Iterable[str],
+    *,
+    final: bool = False,
+) -> None:
+    """Show an interactive countdown before executing commands."""
+
+    intro = [
+        uboot_msg(message, color="white"),
+        uboot_msg("Enter Ctrl+C to cancel...", color="white"),
+    ]
+    width = max(int(seconds), 0)
+    for step in range(width):
+        if step == 0:
+            await tftp.exec([*intro, uboot_progress(step, width)])
+        else:
+            await tftp.exec([uboot_progress(step, width)])
+    await tftp.exec([*_normalize_cmds(cmds)], final=final)
+
+
+async def uboot_boot(tftp: Any, *, delay: int = 0) -> None:
+    """Boot the device after an optional interactive delay."""
+
+    await uboot_exec_delay(
+        tftp,
+        f"Booting in {delay}s",
+        delay,
+        [
+            uboot_msg("uboot-tftp: Executing normal boot..."),
+            "boot",
+        ],
+        final=True,
+    )
 
 
 def _normalize_cmds(cmds: Iterable[str]) -> list[str]:

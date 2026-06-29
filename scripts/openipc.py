@@ -80,22 +80,6 @@ async def uboot_download_with_progress(tftp, dl_url: str, page_url: str=None, si
             await tftp.exec([msg])
     return buf.getvalue()
 
-# Delay then run commands with a chance for the user to break w/ CTRL+c
-async def uboot_exec_delay(tftp, msg: str, secs: int, cmds: list, final: bool=False):
-    msg = [
-        uboot_msg(msg, color='white'),
-        uboot_msg("Enter Ctrl+C to cancel...", color='white'),
-    ]
-    # This isn't really seconds based but close enough on a normal LAN
-    for _ in range (secs):
-        if not _:
-            await tftp.exec([*msg, uboot_progress (_, secs)])
-        else:
-            await tftp.exec([uboot_progress (_, secs)])
-    await tftp.exec([
-        *cmds
-    ], final=final)
-
 async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: bool=False) -> None:
     ''' Throw error for no matching entry '''
 
@@ -109,14 +93,6 @@ async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: 
         uboot_msg(f"function=<python function name>", color="yellow"),
         uboot_msg()
     ], final=final)
-
-async def uboot_boot(tftp, delay: int=0):
-    ''' function boot: Boot device with optional delay '''
-
-    await uboot_exec_delay(tftp, f"Booting in {delay}s", delay, [
-        uboot_msg("uboot-tftp: Executing normal boot..."),
-        'boot'
-    ], final=True)
 
 ###
 ### MOVE ABOVE TO FRAMEWORK

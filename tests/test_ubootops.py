@@ -1,6 +1,11 @@
 import asyncio
 
-from uboot_tftp.ubootops import uboot_nor_download, uboot_nor_probe
+from uboot_tftp.ubootops import (
+    uboot_boot,
+    uboot_exec_delay,
+    uboot_nor_download,
+    uboot_nor_probe,
+)
 
 
 class FakeHandle:
@@ -92,3 +97,54 @@ def test_uboot_nor_probe_runs_recursive_probe_and_parses_hex_size():
     assert second["final"] is True
     assert second["script"][-1] == "echo after"
     assert any("sf read" in line for line in second["script"])
+
+
+def test_uboot_exec_delay_shows_intro_then_runs_commands():
+    handle = FakeHandle()
+
+    asyncio.run(
+        uboot_exec_delay(
+            handle,
+            "Booting in 3s",
+            3,
+            ["boot"],
+            final=True,
+        )
+    )
+
+    assert len(handle.exec_calls) == 4
+    first, second, third, fourth = handle.exec_calls
+    assert "Booting in 3s" in first["script"][0]
+    assert "Enter Ctrl+C to cancel..." in first["script"][1]
+    assert first["final"] is False
+    assert second["script"] == ['echo "\x1b8\x1b[J\x1b7[#  ]"']
+    assert third["script"] == ['echo "\x1b8\x1b[J\x1b7[## ]"']
+    assert fourth["script"] == ["boot"]
+    assert fourth["final"] is True
+
+
+def test_uboot_exec_delay_runs_commands_immediately_for_zero_seconds():
+    handle = FakeHandle()
+
+    asyncio.run(uboot_exec_delay(handle, "Now", 0, ["boot"], final=True))
+
+    assert handle.exec_calls == [
+        {
+            "script": ["boot"],
+            "final": True,
+            "keys": [],
+        }
+    ]
+
+
+def test_uboot_boot_uses_standard_boot_message_and_command():
+    handle = FakeHandle()
+
+    asyncio.run(uboot_boot(handle, delay=1))
+
+    assert len(handle.exec_calls) == 2
+    assert "Booting in 1s" in handle.exec_calls[0]["script"][0]
+    assert handle.exec_calls[1]["script"][0] != "boot"
+    assert "Executing normal boot..." in handle.exec_calls[1]["script"][0]
+    assert handle.exec_calls[1]["script"][1] == "boot"
+    assert handle.exec_calls[1]["final"] is True
