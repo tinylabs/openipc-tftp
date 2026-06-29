@@ -24,10 +24,6 @@ from uboot_tftp.ubootenv import *
 ### MOVE BELOW TO FRAMEWORK
 ###
 
-async def uboot_term_progress (tftp, x: int, total: int, cmds: list=[]):
-    icon = '[' + ('#' * x) + (' ' * (total - x - 1)) + ']'
-    await tftp.exec(cmds + [f'echo "{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}{icon}"'])
-
 async def uboot_download_with_progress(tftp, dl_url: str, page_url: str=None, size: int=0) -> bytes:
     cookies = CookieJar()
     opener = build_opener(HTTPCookieProcessor(cookies))
@@ -41,7 +37,6 @@ async def uboot_download_with_progress(tftp, dl_url: str, page_url: str=None, si
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
-
         with opener.open(page_req, timeout=30) as r:
             r.read()
 
@@ -78,9 +73,10 @@ async def uboot_download_with_progress(tftp, dl_url: str, page_url: str=None, si
 
             if done < total:
                 pct = int(done / total * 10)
-                await uboot_term_progress (tftp, int(pct), 10)
+                msg = uboot_progress (int(pct), 10)
             else:
-                await tftp.exec([uboot_msg("Done")])
+                msg = uboot_msg ("Done")
+            await tftp.exec([msg])
     return buf.getvalue()
 
 # Delay then run commands with a chance for the user to break w/ CTRL+c
@@ -92,9 +88,9 @@ async def uboot_exec_delay(tftp, msg: str, secs: int, cmds: list, final: bool=Fa
     # This isn't really seconds based but close enough on a normal LAN
     for _ in range (secs):
         if not _:
-            await uboot_term_progress(tftp, _, secs, cmds=msg)
+            await tftp.exec([*msg, uboot_progress (_, secs)])
         else:
-            await uboot_term_progress(tftp, _, secs)
+            await tftp.exec([uboot_progress (_, secs)])
     await tftp.exec([
         *cmds
     ], final=final)
@@ -409,7 +405,7 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
             await uboot_boot (tftp)
         case 'progress':
             for _ in range (10):
-                await (uboot_term_progress (tftp, _, 10))
+                await tftp.exec([uboot_progress(_, 10)])
             await tftp.exec([uboot_msg('Done')], final=True)
                              
         # Unrecognized cmd

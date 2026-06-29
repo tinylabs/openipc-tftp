@@ -2,6 +2,7 @@ from uboot_tftp.ubootterm import (
     ANSI_COLORS,
     uboot_err,
     uboot_msg,
+    uboot_progress,
     uboot_term_reset,
 )
 
@@ -15,6 +16,18 @@ def test_uboot_msg_formats_status_message():
         uboot_msg("hello")
         == 'echo "\x1b8\x1b[J\x1b[32mhello\x1b[0m"; echo "\x1b7"'
     )
+
+
+def test_uboot_progress_draws_saved_line_progress_bar():
+    assert uboot_progress(3, 10) == 'echo "\x1b8\x1b[J\x1b7[###       ]"'
+
+
+def test_uboot_progress_clamps_to_bar_width():
+    assert uboot_progress(12, 10) == 'echo "\x1b8\x1b[J\x1b7[##########]"'
+
+
+def test_uboot_progress_clamps_negative_values():
+    assert uboot_progress(-1, 4) == 'echo "\x1b8\x1b[J\x1b7[    ]"'
 
 
 def test_uboot_msg_can_apply_bold_color():
