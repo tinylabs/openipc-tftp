@@ -6,6 +6,7 @@ from .protocol import ParsedPath, parse_request_path
 from .providers import CallableContentProvider, ContentRequest, ContentResult
 from .scripted import ScriptedSessionProvider, SessionHandle
 from .sessions import ClientSession, InMemorySessionStore
+from .ubootops import uboot_nor_download, uboot_nor_probe
 from .ubootenv import (
     EnvPartitionInfo,
     ubootenv_build,
@@ -48,6 +49,8 @@ __all__ = [
     "ubootenv_patch",
     "uboot_memcpy",
     "uboot_memset",
+    "uboot_nor_download",
+    "uboot_nor_probe",
     "uboot_nor_erase",
     "uboot_nor_read",
     "uboot_nor_write",

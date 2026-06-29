@@ -16,6 +16,7 @@ from urllib.request import build_opener, HTTPCookieProcessor, Request
 from http.cookiejar import CookieJar
 
 from uboot_tftp.ubootscript import *
+from uboot_tftp.ubootops import *
 from uboot_tftp.ubootterm import *
 from uboot_tftp.ubootenv import *
 
@@ -95,40 +96,6 @@ async def uboot_exec_delay(tftp, msg: str, secs: int, cmds: list, final: bool=Fa
         *cmds
     ], final=final)
 
-# Back NOR flash to TFTP server
-async def uboot_nor_download (tftp, sz: int, msg: str='', final=False) -> bytes:
-    script = [uboot_msg(f'{msg}')] if msg else []
-    script += [
-        uboot_msg ("Copying NOR to RAM... ", bold=True, nl=False),
-        uboot_memset (tftp, offset=0, size=sz, value=0xFF),
-        uboot_nor_read (tftp, ram_offset=0, nor_offset=0, size=sz),
-        uboot_msg ("OK"),
-        uboot_msg ("Downloading image via TFTP...", bold=True),
-    ]
-    return await tftp.exec_recv(script=script, size=sz, final=final)
-
-async def uboot_nor_probe(tftp,
-                          env: dict[str, str],
-                          max_size=None,
-                          final=False) -> int:
-    if max_size:
-        s = max_size
-        max_size = int(s[:-1]) * 2**20 if s[-1].upper() == "M" else None
-    if not max_size:
-        max_size = int(128*2**20)
-    await tftp.exec ([
-        uboot_msg("Probing NOR flash... ", nl=False, bold=True),
-        'sf probe 0',
-        'setenv status $?',
-    ], keys=['status'])
-    if env['status'] == '1':
-        return 0
-    await tftp.exec ([
-        *uboot_nor_gen_probe(tftp, 2**20, max_size),
-        uboot_msg ('${size}')
-    ], keys=['size'], final=final)
-    return int (env['size'], 0)
-
 async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: bool=False) -> None:
     ''' Throw error for no matching entry '''
 
@@ -167,7 +134,15 @@ async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw:
 async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> bytes:
     if not filename:
         filename = f"snapshot-{datetime.now():%Y%m%d-%H%M%S}.bin"
-    binary = await uboot_nor_download (tftp, sz)
+    binary = await uboot_nor_download(
+        tftp,
+        sz,
+        pre_cmds=[uboot_msg("Copying NOR to RAM... ", bold=True, nl=False)],
+        post_cmds=[
+            uboot_msg("OK"),
+            uboot_msg("Downloading image via TFTP...", bold=True),
+        ],
+    )
     filename = f'backup/{filename}'
     tftp.write_file (filename, binary)
     await tftp.exec([
@@ -384,9 +359,20 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
         case 'install':
             await openipc_install (tftp, ident, cmd, tftp_env)
         case 'probe':
-            sz = await uboot_nor_probe (tftp, tftp_env, tftp_env.get('nor_size', None), final=True)
+            sz = await uboot_nor_probe(
+                tftp,
+                max_size=tftp_env.get('nor_size', None),
+                pre_cmds=[uboot_msg("Probing NOR flash... ", nl=False, bold=True)],
+                post_cmds=[uboot_msg('${size}')],
+                final=True,
+            )
         case 'backup':
-            sz = await uboot_nor_probe (tftp, tftp_env, tftp_env.get('nor_size', None))
+            sz = await uboot_nor_probe(
+                tftp,
+                max_size=tftp_env.get('nor_size', None),
+                pre_cmds=[uboot_msg("Probing NOR flash... ", nl=False, bold=True)],
+                post_cmds=[uboot_msg('${size}')],
+            )
             filename = env.get ('filename', '')
             await openipc_nor_backup(tftp, sz, filename, final=True)            
         case 'boot':
