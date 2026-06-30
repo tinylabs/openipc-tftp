@@ -6,11 +6,13 @@ Implements installing openipc on ip cameras
 
 from __future__ import annotations
 
+import json
 import re
 import random
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
+from typing import Any
 
 from uboot_tftp.ubootscript import *
 from uboot_tftp.ubootops import *
@@ -18,14 +20,77 @@ from uboot_tftp.ubootterm import *
 from uboot_tftp.ubootenv import *
 
 
+class GithubJsonManifest:
+    """Download and cache a GitHub API JSON manifest."""
+
+    def __init__(
+        self,
+        tftp,
+        path: str,
+        *,
+        destination: str | None = None,
+        artifact_key: str | None = None,
+    ) -> None:
+        self.tftp = tftp
+        self.path = self._normalize_path(path)
+        self.url = f"https://api.github.com/repos/{quote(self.path, safe='/')}"
+        self.destination = destination or f"github/{self.path}.json"
+        self.artifact_key = artifact_key or f"github-json:{self.path}"
+        self._manifest: dict[str, Any] | None = None
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        normalized = str(path).strip().strip("/")
+        if not normalized:
+            raise ValueError("path must not be empty")
+        return normalized
+
+    @property
+    def manifest(self) -> dict[str, Any]:
+        if self._manifest is None:
+            raise RuntimeError("manifest has not been loaded yet")
+        return self._manifest
+
+    async def load(self) -> dict[str, Any]:
+        if self._manifest is not None:
+            return self._manifest
+
+        self.tftp.acquire_download(
+            artifact_key=self.artifact_key,
+            url=self.url,
+            destination=self.destination,
+            page_url=self.url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+        await self.tftp.exec([uboot_msg (f"Downloading {self.destination}: ", nl=False, bold=True)])
+        while True:
+            artifact = self.tftp.get_download(self.artifact_key)
+            await self.tftp.exec(_download_progress_lines(artifact, Path(self.destination).name))
+            if artifact is None:
+                raise FileNotFoundError(f"unknown download artifact: {self.artifact_key!r}")
+            if artifact.state == "done":
+                payload = self.tftp.read_file(self.destination)
+                self._manifest = json.loads(payload)
+                return self._manifest
+            if artifact.state == "failed":
+                raise RuntimeError(f"download failed for {self.url}: {artifact.error}")
+
 def _download_progress_lines(artifact, name: str) -> str:
-    if artifact.bytes_total:
-        pct = int((artifact.bytes_done / artifact.bytes_total) * 100)
-        filled = int((artifact.bytes_done / artifact.bytes_total) * 10)
-        return uboot_progress(filled, 10)
-    else:
-        mib = artifact.bytes_done / (1024 * 1024)
-        return uboot_status(f"{mib:.1f} MiB")
+    script = []
+    #if artifact.bytes_total:
+    #    pct = int((artifact.bytes_done / artifact.bytes_total) * 100)
+    #    filled = int((artifact.bytes_done / artifact.bytes_total) * 10)
+    #    script += [uboot_progress(filled, 10)]
+    #else:
+    mib = artifact.bytes_done / (1024 * 1024)
+    script += [uboot_status(f"{mib:.1f} MiB")]
+    if artifact.bytes_done == artifact.bytes_total:
+        script += [f'echo {SAVE_CURSOR}']
+    return script
 
 async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw: str) -> bytes:
     filename = f"install/openipc-{soc}-{fw}-{size_mb}mb.bin"
@@ -51,16 +116,12 @@ async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw:
 
     while True:
         artifact = tftp.get_download(artifact_key)
+        await tftp.exec(_download_progress_lines(artifact, Path(filename).name))
         if artifact.state == "done":
-            await tftp.exec([
-                _download_progress_lines(artifact, Path(filename).name),
-                f'echo "{SAVE_CURSOR} "'
-            ])
             return tftp.read_file(filename)
         if artifact.state == "failed":
             await tftp.exec([uboot_err(f"Download failed: {artifact.error}")], final=True)
             return b""
-        await tftp.exec([_download_progress_lines(artifact, Path(filename).name)])
 
 async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> bytes:
     if not filename:
@@ -343,8 +404,16 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
             ], final=True)
                 
                              
+        case 'manifest':
+            manifest = GithubJsonManifest(tftp, path='OpenIPC/firmware/releases/tags/latest')
+            mani = await manifest.load ()
+            print (mani)
+            await tftp.exec([uboot_msg ("Done")], final=True)
+            
         # Unrecognized cmd
         case _:
             await uboot_nomatch(tftp, ident, cmd,
                                 cmd_list=['install', 'probe', 'backup', 'boot'])
             await uboot_boot (tftp, delay=10)
+            
+            
