@@ -5,7 +5,7 @@ Minimal session-aware TFTP server for OpenIPC and U-Boot style workflows.
 There are only two request modes:
 
 - RRQ or WRQ without `id=<ident>`: handled as a normal static TFTP file operation under the configured root directory.
-- RRQ or WRQ starting with `id=<ident>`: handled as part of a session.
+- RRQ starting with `id=<ident>`: handled as part of a session.
 
 ## Sample implementation - OpenIPC: https://wiki.openipc.org/
 
