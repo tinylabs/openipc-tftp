@@ -29,14 +29,24 @@ class GithubJsonManifest:
         path: str,
         *,
         destination: str | None = None,
-        artifact_key: str | None = None,
+        cache: bool = False,
     ) -> None:
         self.tftp = tftp
         self.path = self._normalize_path(path)
         self.url = f"https://api.github.com/repos/{quote(self.path, safe='/')}"
         self.destination = destination or f"github/{self.path}.json"
-        self.artifact_key = artifact_key or f"github-json:{self.path}"
+        self.artifact_key = f"github-json:{self.path}"
         self._manifest: dict[str, Any] | None = None
+        if cache:
+            self._load_cached_manifest()
+
+    def _load_cached_manifest(self) -> None:
+        if not hasattr(self.tftp, "file_exists") or not hasattr(self.tftp, "read_file"):
+            return
+        if not self.tftp.file_exists(self.destination):
+            return
+        payload = self.tftp.read_file(self.destination)
+        self._manifest = json.loads(payload)
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -51,77 +61,55 @@ class GithubJsonManifest:
             raise RuntimeError("manifest has not been loaded yet")
         return self._manifest
 
+    def assets(self) -> list[dict[str, Any]]:
+        manifest = self.manifest
+        assets = manifest.get("assets", [])
+        if not isinstance(assets, list):
+            raise TypeError("manifest assets field must be a list")
+        return [asset for asset in assets if isinstance(asset, dict)]
+
+    def find(self, *, match: Iterable[str]) -> dict[str, dict[str, Any]]:
+        needles = [str(value) for value in match if str(value)]
+        if not needles:
+            return {
+                str(asset.get("name", "")): asset
+                for asset in self.assets()
+                if str(asset.get("name", ""))
+            }
+        matched: dict[str, dict[str, Any]] = {}
+        for asset in self.assets():
+            name = str(asset.get("name", ""))
+            if all(needle in name for needle in needles):
+                matched[name] = asset
+        return matched
+
     async def load(self) -> dict[str, Any]:
         if self._manifest is not None:
             return self._manifest
 
-        self.tftp.acquire_download(
-            artifact_key=self.artifact_key,
+        payload = await uboot_download_url(
+            self.tftp,
             url=self.url,
-            destination=self.destination,
+            filepath=self.destination,
             page_url=self.url,
             headers={
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
+        self._manifest = json.loads(payload)
 
-        await self.tftp.exec([uboot_msg (f"Downloading {self.destination}: ", nl=False, bold=True)])
-        while True:
-            artifact = self.tftp.get_download(self.artifact_key)
-            await self.tftp.exec(_download_progress_lines(artifact, Path(self.destination).name))
-            if artifact is None:
-                raise FileNotFoundError(f"unknown download artifact: {self.artifact_key!r}")
-            if artifact.state == "done":
-                payload = self.tftp.read_file(self.destination)
-                self._manifest = json.loads(payload)
-                return self._manifest
-            if artifact.state == "failed":
-                raise RuntimeError(f"download failed for {self.url}: {artifact.error}")
-
-def _download_progress_lines(artifact, name: str) -> str:
-    script = []
-    #if artifact.bytes_total:
-    #    pct = int((artifact.bytes_done / artifact.bytes_total) * 100)
-    #    filled = int((artifact.bytes_done / artifact.bytes_total) * 10)
-    #    script += [uboot_progress(filled, 10)]
-    #else:
-    mib = artifact.bytes_done / (1024 * 1024)
-    script += [uboot_status(f"{mib:.1f} MiB")]
-    if artifact.bytes_done == artifact.bytes_total:
-        script += [f'echo {SAVE_CURSOR}']
-    return script
-
+    
 async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw: str) -> bytes:
     filename = f"install/openipc-{soc}-{fw}-{size_mb}mb.bin"
-    if tftp.file_exists(filename):
-        await tftp.exec([uboot_msg(f"Using cached download: {filename}.", bold=True)])
-        return tftp.read_file(filename)
-    else:
-        await tftp.exec([uboot_msg(f"Downloading {filename}... ", nl=False, bold=True)])
-
-    artifact_key = f"openipc:{vendor}:{soc}:{size_mb}M:{fw}:nor"
     page_url = f"https://openipc.org/cameras/vendors/{quote(vendor)}/socs/{quote(soc)}"
     dl_url = (
         f"https://openipc.org/cameras/vendors/{quote(vendor)}/"
         f"socs/{quote(soc)}/download_full_image"
         f"?flash_size={quote(str(size_mb))}&flash_type=nor&fw_release={quote(fw)}"
     )
-    tftp.acquire_download(
-        artifact_key=artifact_key,
-        url=dl_url,
-        destination=filename,
-        page_url=page_url,
-    )
+    return await uboot_download_url (tftp, filepath=filename, url=dl_url, page_url=page_url)
 
-    while True:
-        artifact = tftp.get_download(artifact_key)
-        await tftp.exec(_download_progress_lines(artifact, Path(filename).name))
-        if artifact.state == "done":
-            return tftp.read_file(filename)
-        if artifact.state == "failed":
-            await tftp.exec([uboot_err(f"Download failed: {artifact.error}")], final=True)
-            return b""
 
 async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> bytes:
     if not filename:
@@ -365,6 +353,7 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     match cmd:
         case 'install':
             await openipc_install (tftp, ident, cmd, tftp_env)
+
         case 'probe':
             sz = await uboot_nor_probe(
                 tftp,
@@ -373,6 +362,7 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
                 post_cmds=[uboot_msg('${size}')],
                 final=True,
             )
+
         case 'backup':
             sz = await uboot_nor_probe(
                 tftp,
@@ -382,33 +372,24 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
             )
             filename = env.get ('filename', '')
             await openipc_nor_backup(tftp, sz, filename, final=True)            
+
         case 'boot':
             await uboot_boot (tftp)
-        case 'progress':
-            await uboot_exec_delay(tftp, "Test Message", 10,
-                                   [uboot_msg ("Done")], final=True)
-        case 'bootnfs':
-            bootargs = ' '.join ([f'mem=${{totalmem}}',
-                                  'console=ttyAMA0,115200',
-                                  'panic=20',
-                                  'root=/dev/nfs',
-                                  'ip=dhcp',
-                                  f'nfsroot={tftp_env["nfsserver"]}:{tftp_env["rootfs"]},v3,nolock',
-                                  'rw'])
-            await tftp.exec([
-                f'setenv bootargs {bootargs}',
-                uboot_msg ('Booting from NFS...'),
-                uboot_msg (f'bootargs=${{bootargs}}'),
-                f'setenv loadkernel "tftpboot {tftp.rambase} {tftp.server_ip}:${{hostname}}/{tftp_env["kernel"]}; bootm {tftp.rambase}"',
-                uboot_msg (f'loadkernel=${{loadkernel}}'),
-            ], final=True)
-                
-                             
+
         case 'manifest':
-            manifest = GithubJsonManifest(tftp, path='OpenIPC/firmware/releases/tags/latest')
-            mani = await manifest.load ()
-            print (mani)
-            await tftp.exec([uboot_msg ("Done")], final=True)
+            soc = tftp_env.get ('soc', 'gk7205v300')
+            path='OpenIPC/firmware/releases/tags/latest'
+            manifest = GithubJsonManifest(tftp, path=path)
+            await manifest.load ()
+            matches = manifest.find (match=[soc])
+            for k, v in matches.items():
+                name = k
+                await uboot_download_url(
+                    tftp,
+                    url=v["browser_download_url"],
+                    filepath=f'{path}/{soc}/{name}'
+                )
+            await tftp.exec ([uboot_msg ()], final=True)
             
         # Unrecognized cmd
         case _:

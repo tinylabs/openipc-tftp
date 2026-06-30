@@ -1,4 +1,4 @@
-"""Minimal session-aware TFTP helpers for OpenIPC boot flows."""
+"""Minimal session-aware TFTP helpers for uboot flows."""
 
 from .config import DaemonConfig, ScriptRoute, load_daemon_config
 from .download_jobs import DownloadArtifact, DownloadJobStore, DownloadRequest
@@ -7,7 +7,7 @@ from .protocol import ParsedPath, parse_request_path
 from .providers import CallableContentProvider, ContentRequest, ContentResult
 from .scripted import ScriptedSessionProvider, SessionHandle
 from .sessions import ClientSession, InMemorySessionStore
-from .ubootops import uboot_boot, uboot_exec_delay, uboot_nor_download, uboot_nor_probe
+from .ubootops import uboot_boot, uboot_exec_delay, uboot_nor_download, uboot_nor_probe, uboot_download_url
 from .ubootenv import (
     EnvPartitionInfo,
     ubootenv_build,
@@ -61,6 +61,7 @@ __all__ = [
     "uboot_nor_read",
     "uboot_nor_write",
     "uboot_nor_gen_probe",
+    "uboot_download_url",
     "UploadedFile",
     "UploadRequest",
     "extract_script_payload",
