@@ -30,7 +30,10 @@ def _download_progress_lines(artifact, name: str) -> str:
 async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw: str) -> bytes:
     filename = f"install/openipc-{soc}-{fw}-{size_mb}mb.bin"
     if tftp.file_exists(filename):
+        await tftp.exec([uboot_msg(f"Using cached download: {filename}.", bold=True)])
         return tftp.read_file(filename)
+    else:
+        await tftp.exec([uboot_msg(f"Downloading {filename}... ", nl=False, bold=True)])
 
     artifact_key = f"openipc:{vendor}:{soc}:{size_mb}M:{fw}:nor"
     page_url = f"https://openipc.org/cameras/vendors/{quote(vendor)}/socs/{quote(soc)}"
@@ -46,7 +49,6 @@ async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw:
         page_url=page_url,
     )
 
-    await tftp.exec([uboot_msg(f"Downloading {filename}... ", nl=False, bold=True)])
     while True:
         artifact = tftp.get_download(artifact_key)
         if artifact.state == "done":
@@ -324,6 +326,22 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
         case 'progress':
             await uboot_exec_delay(tftp, "Test Message", 10,
                                    [uboot_msg ("Done")], final=True)
+        case 'bootnfs':
+            bootargs = ' '.join ([f'mem=${{totalmem}}',
+                                  'console=ttyAMA0,115200',
+                                  'panic=20',
+                                  'root=/dev/nfs',
+                                  'ip=dhcp',
+                                  f'nfsroot={tftp_env["nfsserver"]}:{tftp_env["rootfs"]},v3,nolock',
+                                  'rw'])
+            await tftp.exec([
+                f'setenv bootargs {bootargs}',
+                uboot_msg ('Booting from NFS...'),
+                uboot_msg (f'bootargs=${{bootargs}}'),
+                f'setenv loadkernel "tftpboot {tftp.rambase} {tftp.server_ip}:${{hostname}}/{tftp_env["kernel"]}; bootm {tftp.rambase}"',
+                uboot_msg (f'loadkernel=${{loadkernel}}'),
+            ], final=True)
+                
                              
         # Unrecognized cmd
         case _:
