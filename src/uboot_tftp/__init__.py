@@ -1,6 +1,7 @@
 """Minimal session-aware TFTP helpers for OpenIPC boot flows."""
 
 from .config import DaemonConfig, ScriptRoute, load_daemon_config
+from .download_jobs import DownloadArtifact, DownloadJobStore, DownloadRequest
 from .mkimage import LegacyScriptImageCompiler, extract_script_payload
 from .protocol import ParsedPath, parse_request_path
 from .providers import CallableContentProvider, ContentRequest, ContentResult
@@ -32,6 +33,9 @@ __all__ = [
     "ContentRequest",
     "ContentResult",
     "DaemonConfig",
+    "DownloadArtifact",
+    "DownloadJobStore",
+    "DownloadRequest",
     "DynamicContentServer",
     "EnvPartitionInfo",
     "ubootenv_build",

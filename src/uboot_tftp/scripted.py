@@ -12,6 +12,7 @@ from pathlib import Path
 from types import ModuleType
 
 from .config import DaemonConfig
+from .download_jobs import DownloadArtifact, DownloadJobStore
 from .mkimage import LegacyScriptImageCompiler
 from .protocol import ParsedPath, parse_request_path
 from .providers import ContentRequest, ContentResult, DynamicContentProvider
@@ -149,6 +150,37 @@ class SessionHandle:
     def parse_env_export(self, body: bytes) -> dict[str, str]:
         return ubootenv_parse_export(body)
 
+    def acquire_download(
+        self,
+        *,
+        artifact_key: str,
+        url: str,
+        destination: str | Path,
+        page_url: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> DownloadArtifact:
+        target = _resolve_static_path(self.provider.static_root, "/" + str(destination))
+        if target is None:
+            raise ValueError(f"unsafe destination path: {destination!r}")
+        relative_path = str(Path(str(destination).lstrip("/"))).replace("\\", "/")
+        artifact = self.provider.download_jobs.acquire(
+            artifact_key=artifact_key,
+            session_id=self.session.client_id,
+            url=url,
+            relative_path=relative_path,
+            final_path=target,
+            page_url=page_url,
+            headers=headers,
+        )
+        self.session.download_artifacts.add(artifact_key)
+        return artifact
+
+    def get_download(self, artifact_key: str) -> DownloadArtifact:
+        artifact = self.provider.download_jobs.get(artifact_key)
+        if artifact is None:
+            raise FileNotFoundError(f"unknown download artifact: {artifact_key!r}")
+        return artifact
+
     async def fetch_env(
         self,
         *,
@@ -180,6 +212,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
         sessions: InMemorySessionStore | None = None,
         upload_store: InMemoryUploadStore | None = None,
         compiler: LegacyScriptImageCompiler | None = None,
+        download_jobs: DownloadJobStore | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions or InMemorySessionStore()
@@ -188,6 +221,9 @@ class ScriptedSessionProvider(DynamicContentProvider):
         self._module = _load_script_module(config.script_path)
         self.static_root = config.static_root
         self.static_root.mkdir(parents=True, exist_ok=True)
+        self.download_jobs = download_jobs or DownloadJobStore(
+            temp_root=self.static_root / ".downloads"
+        )
 
     def fetch(self, request: ContentRequest) -> ContentResult:
         parsed = parse_request_path(request.filename)
@@ -198,6 +234,9 @@ class ScriptedSessionProvider(DynamicContentProvider):
         return self._start_session(request, parsed)
 
     def _start_session(self, request: ContentRequest, parsed: ParsedPath) -> ContentResult:
+        existing = self.sessions.get(parsed.client_id)
+        if existing is not None:
+            self._discard_session(existing)
         session = self.sessions.replace(parsed.client_id)
         session.record_rrq(parsed)
         session.server_ip = _get_local_ip(str(request.peer[0]))
@@ -217,7 +256,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
             session.preflight_pending = False
             if session.env.get("hush_shell") != "true":
                 session.phase = "complete"
-                self.sessions.discard(session.client_id)
+                self._discard_session(session)
                 return ContentResult.from_bytes(
                     self.compiler.compile(_ensure_newline(_hush_failure_script()))
                 )
@@ -246,11 +285,11 @@ class ScriptedSessionProvider(DynamicContentProvider):
                 instruction = session.handler.send(send_value)
         except StopIteration:
             session.phase = "complete"
-            self.sessions.discard(session.client_id)
+            self._discard_session(session)
             raise FileNotFoundError("session completed without emitting a script")
         except ReceiveFailedError as error:
             session.phase = "complete"
-            self.sessions.discard(session.client_id)
+            self._discard_session(session)
             raise FileNotFoundError(str(error)) from error
         return self._result_from_instruction(session, instruction)
 
@@ -317,7 +356,7 @@ class ScriptedSessionProvider(DynamicContentProvider):
             )
         elif instruction.final:
             session.phase = "complete"
-            self.sessions.discard(session.client_id)
+            self._discard_session(session)
         else:
             session.current_token = _new_token()
             session.phase = "await_rrq"
@@ -403,6 +442,15 @@ class ScriptedSessionProvider(DynamicContentProvider):
             client_id.lower(), self.config.default
         )
 
+    def _discard_session(self, session: ClientSession) -> None:
+        for artifact_key in list(session.download_artifacts):
+            self.download_jobs.release(
+                artifact_key=artifact_key,
+                session_id=session.client_id,
+            )
+            session.download_artifacts.discard(artifact_key)
+        self.sessions.discard(session.client_id)
+
     def _static_result(self, path: str) -> ContentResult:
         file_path = _resolve_static_path(self.static_root, path)
         if file_path is None or not file_path.is_file():
@@ -444,7 +492,7 @@ def _hush_probe_script() -> str:
     return _join_script_lines(
         (
             uboot_term_reset(),
-            uboot_msg("Checking hush shell... ", nl=False, bold=True),
+            uboot_msg("Checking hush shell... ", bold=True),
             "if true; then setenv hush_shell true; fi",
         )
     )

@@ -52,14 +52,18 @@ def uboot_term_reset() -> str:
     return _echo(f"{CLEAR_SCREEN}{RESTORE}{HOME_CURSOR}{SAVE_CURSOR}")
 
 
+def uboot_status(msg) -> str:
+    """Return a U-Boot command that redraws the saved-line progress indicator."""
+
+    return _echo(f"{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}{msg}")
+
 def uboot_progress(x: int, total: int) -> str:
     """Return a U-Boot command that redraws the saved-line progress indicator."""
 
     width = max(int(total), 0)
     filled = min(max(int(x), 0), width)
     icon = "[" + ("#" * filled) + (" " * (width - filled)) + "]"
-    return _echo(f"{RESTORE_CURSOR}{CLEAR_REGION}{SAVE_CURSOR}{icon}")
-
+    return uboot_status(icon)
 
 def uboot_msg(msg: str = "", color: ColorName = "green", bold: bool = False, nl: bool=True) -> str:
     """Return a U-Boot command that prints a formatted status message."""
@@ -108,5 +112,6 @@ __all__ = [
     "uboot_err",
     "uboot_msg",
     "uboot_progress",
+    "uboot_status",
     "uboot_term_reset",
 ]

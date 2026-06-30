@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import re
 import random
-from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
-from urllib.request import build_opener, HTTPCookieProcessor, Request
-from http.cookiejar import CookieJar
 
 from uboot_tftp.ubootscript import *
 from uboot_tftp.ubootops import *
@@ -21,91 +18,47 @@ from uboot_tftp.ubootterm import *
 from uboot_tftp.ubootenv import *
 
 
-###
-### MOVE BELOW TO FRAMEWORK
-###
+def _download_progress_lines(artifact, name: str) -> str:
+    if artifact.bytes_total:
+        pct = int((artifact.bytes_done / artifact.bytes_total) * 100)
+        filled = int((artifact.bytes_done / artifact.bytes_total) * 10)
+        return uboot_progress(filled, 10)
+    else:
+        mib = artifact.bytes_done / (1024 * 1024)
+        return uboot_status(f"{mib:.1f} MiB")
 
-async def uboot_download_with_progress(tftp, dl_url: str, page_url: str=None, size: int=0) -> bytes:
-    cookies = CookieJar()
-    opener = build_opener(HTTPCookieProcessor(cookies))
-
-    # First request establishes the session cookie.
-    if page_url:
-        page_req = Request(
-            page_url,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-        )
-        with opener.open(page_req, timeout=30) as r:
-            r.read()
-
-    req = Request(
-        dl_url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/octet-stream,*/*",
-            "Referer": page_url,
-            # Do not request br/zstd unless you decode them yourself.
-            "Accept-Encoding": "identity",
-        },
-    )
-
-    # Remove request if no referrer
-    if not page_url:
-        del req.headers['Referrer']
-        
-    buf = BytesIO()
-
-    with opener.open(req, timeout=60) as r:
-        total = int(r.headers.get("Content-Length", "0")) or None
-        if total is None and size:
-            total = size
-        done = 0
-
-        while done < total:
-            chunk = r.read(1 * 1024 * 1024)
-            if not chunk:
-                break
-
-            buf.write(chunk)
-            done += len(chunk)
-
-            if done < total:
-                pct = int(done / total * 10)
-                msg = uboot_progress (int(pct), 10)
-            else:
-                msg = uboot_msg ("Done")
-            await tftp.exec([msg])
-    return buf.getvalue()
-
-async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: bool=False) -> None:
-    ''' Throw error for no matching entry '''
-
-    cmds = str (cmd_list) if cmd_list else ''
-    await tftp.exec ([
-        uboot_err(f"uboot-tftp: No matching entry for: id={ident}"),
-        uboot_err(f"uboot-tftp: cmd={cmd} is not recognized."),
-        uboot_msg(f"uboot-tftp: valid cmds = {cmd_list}"),        
-        uboot_msg(f"Add snippet to uboot-tftp config.toml:", color="yellow"),
-        uboot_msg(f"[{ident}]", color="yellow"),
-        uboot_msg(f"function=<python function name>", color="yellow"),
-        uboot_msg()
-    ], final=final)
-
-###
-### MOVE ABOVE TO FRAMEWORK
-###
-        
 async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw: str) -> bytes:
-    page_url = f"https://openipc.org/cameras/vendors/{quote(vendor)}/socs/{quote(soc)}"    
+    filename = f"install/openipc-{soc}-{fw}-{size_mb}mb.bin"
+    if tftp.file_exists(filename):
+        return tftp.read_file(filename)
+
+    artifact_key = f"openipc:{vendor}:{soc}:{size_mb}M:{fw}:nor"
+    page_url = f"https://openipc.org/cameras/vendors/{quote(vendor)}/socs/{quote(soc)}"
     dl_url = (
         f"https://openipc.org/cameras/vendors/{quote(vendor)}/"
         f"socs/{quote(soc)}/download_full_image"
         f"?flash_size={quote(str(size_mb))}&flash_type=nor&fw_release={quote(fw)}"
     )
-    return await uboot_download_with_progress (tftp, dl_url, page_url, int(size_mb*1024*1024))
+    tftp.acquire_download(
+        artifact_key=artifact_key,
+        url=dl_url,
+        destination=filename,
+        page_url=page_url,
+    )
+
+    await tftp.exec([uboot_msg(f"Downloading {filename}... ", nl=False, bold=True)])
+    while True:
+        artifact = tftp.get_download(artifact_key)
+        if artifact.state == "done":
+            await tftp.exec([
+                _download_progress_lines(artifact, Path(filename).name),
+                f'echo "{SAVE_CURSOR} "'
+            ])
+            return tftp.read_file(filename)
+        if artifact.state == "failed":
+            await tftp.exec([uboot_err(f"Download failed: {artifact.error}")], final=True)
+            return b""
+        await tftp.exec([_download_progress_lines(artifact, Path(filename).name)])
 
 async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> bytes:
     if not filename:
@@ -116,7 +69,7 @@ async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> b
         pre_cmds=[uboot_msg("Copying NOR to RAM... ", bold=True, nl=False)],
         post_cmds=[
             uboot_msg("OK"),
-            uboot_msg("Downloading image via TFTP...", bold=True),
+            uboot_msg("Downloading backup via TFTP...", bold=True),
         ],
     )
     filename = f'backup/{filename}'
@@ -229,7 +182,12 @@ async def openipc_install(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     cenv.setdefault ('nor_size', None)
     
     # Probe NOR flash
-    nor_size = await uboot_nor_probe (tftp, tftp_env, cenv['nor_size'])
+    nor_size = await uboot_nor_probe(
+        tftp,
+        max_size=tftp_env.get('nor_size', None),
+        pre_cmds=[uboot_msg("Probing NOR flash... ", nl=False, bold=True)],
+        post_cmds=[uboot_msg('${size}')],
+    )
     nor_size_mb = int(nor_size / 2**20)
     
     # Check if we have everything we need in env
@@ -257,17 +215,10 @@ async def openipc_install(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     await tftp.exec([uboot_msg('Backing up NOR flash.', bold=True)])
     await openipc_nor_backup(tftp, nor_size, backup_filename)
 
-    # Fetch binary for upload
-    if tftp.file_exists(filename):
-        await tftp.exec ([uboot_msg(f"Using cached openipc binary: {filename}", bold=True)])
-        binary = tftp.read_file (filename)
-    else:
-        await tftp.exec ([uboot_msg("Downloading openipc binary... ", nl=False, bold=True)])
-        binary = await openipc_download_binary(tftp, vendor=vendor, soc=soc, fw=fw, size_mb=nor_size_mb)
-        if not binary:
-            tftp.exec([uboot_err("Failed")], final=True)
-            return
-        tftp.write_file(filename, binary)
+    # Download official binary
+    binary = await openipc_download_binary(tftp, vendor=vendor, soc=soc, fw=fw, size_mb=nor_size_mb)
+    if not binary:
+        return
 
     # Extract uboot env from new image
     await tftp.exec ([uboot_msg("Extracting uboot env from image... ", nl=False, bold=True)])
@@ -322,8 +273,25 @@ async def openipc_install(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
         uboot_msg(f"Web UI: http://{cenv['ipaddr']}/"),
         uboot_msg(f"SSH: ssh root@{cenv['ipaddr']} (password: 12345)"),
         uboot_msg("Support OpenIPC: https://opencollective.com/openipc/contribute"),
+        uboot_msg(),
     ])
-    await uboot_exec_delay (tftp, "Rebooting in 10 seconds", 10, ['reset'], final=True)
+    await uboot_exec_delay (tftp, "Rebooting in 10 seconds", 10,
+                            [uboot_msg ("Rebooting...", color='white'), 'reset'],
+                            final=True)
+
+async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: bool=False) -> None:
+    ''' Throw error for no matching entry '''
+
+    cmds = str (cmd_list) if cmd_list else ''
+    await tftp.exec ([
+        uboot_err(f"uboot-tftp: No matching entry for: id={ident}"),
+        uboot_err(f"uboot-tftp: cmd={cmd} is not recognized."),
+        uboot_msg(f"uboot-tftp: valid cmds = {cmd_list}"),        
+        uboot_msg(f"Add snippet to uboot-tftp config.toml:", color="yellow"),
+        uboot_msg(f"[{ident}]", color="yellow"),
+        uboot_msg(f"function=<python function name>", color="yellow"),
+        uboot_msg()
+    ], final=final)
 
 async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     '''
@@ -354,9 +322,8 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
         case 'boot':
             await uboot_boot (tftp)
         case 'progress':
-            for _ in range (10):
-                await tftp.exec([uboot_progress(_, 10)])
-            await tftp.exec([uboot_msg('Done')], final=True)
+            await uboot_exec_delay(tftp, "Test Message", 10,
+                                   [uboot_msg ("Done")], final=True)
                              
         # Unrecognized cmd
         case _:

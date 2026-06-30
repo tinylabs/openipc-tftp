@@ -1,7 +1,9 @@
+import threading
 import pytest
 import re
 
 from uboot_tftp.config import load_daemon_config
+from uboot_tftp.download_jobs import DownloadJobStore
 from uboot_tftp.mkimage import extract_script_payload
 from uboot_tftp.providers import ContentRequest
 from uboot_tftp.scripted import ScriptedSessionProvider
@@ -613,3 +615,96 @@ def test_fetch_env_helper_exports_receives_and_parses_environment(tmp_path):
         provider.fetch(request(f"id=cam123/token={second_token}/recv=ok"))
     )
     assert "echo ethaddr 00:11:22:33:44:55 1235" in third
+
+
+def test_session_handle_can_acquire_and_poll_shared_download_artifact(tmp_path):
+    events: list[str] = []
+    release = threading.Event()
+
+    def downloader(request, progress):
+        events.append(request.artifact_key)
+        release.wait(timeout=1)
+        request.temp_path.write_bytes(b"fw")
+        progress(2, 2)
+
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    artifact = tftp.acquire_download(",
+                "        artifact_key='shared-fw',",
+                "        url='https://example/fw.bin',",
+                "        destination='cache/fw.bin',",
+                "    )",
+                "    polled = tftp.get_download('shared-fw')",
+                "    await tftp.exec([",
+                "        f'echo state {artifact.state}',",
+                "        f'echo path {polled.relative_path}',",
+                "    ], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    downloads = DownloadJobStore(temp_root=tmp_path / "downloads", downloader=downloader)
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config,
+        sessions=sessions,
+        upload_store=InMemoryUploadStore(sessions),
+        download_jobs=downloads,
+    )
+
+    script = start_session_script(provider, "id=cam123/bootstrap")
+
+    assert "echo state pending" in script
+    assert "echo path cache/fw.bin" in script
+    for _ in range(20):
+        if events:
+            break
+        threading.Event().wait(0.01)
+    assert events == ["shared-fw"]
+    release.set()
+
+
+def test_session_cleanup_releases_attached_download_artifacts(tmp_path):
+    release = threading.Event()
+
+    def downloader(request, progress):
+        release.wait(timeout=1)
+        request.temp_path.write_bytes(b"fw")
+        progress(2, 2)
+
+    config = write_config(
+        tmp_path,
+        "\n".join(
+            (
+                "async def handler(tftp, ident, cmd, env):",
+                "    tftp.acquire_download(",
+                "        artifact_key='shared-fw',",
+                "        url='https://example/fw.bin',",
+                "        destination='cache/fw.bin',",
+                "    )",
+                "    await tftp.exec(['echo done'], final=True)",
+                "",
+                "async def default(tftp, ident, cmd, env):",
+                "    await tftp.exec(['echo default'], final=True)",
+            )
+        ),
+    )
+    downloads = DownloadJobStore(temp_root=tmp_path / "downloads", downloader=downloader)
+    sessions = InMemorySessionStore()
+    provider = ScriptedSessionProvider(
+        config,
+        sessions=sessions,
+        upload_store=InMemoryUploadStore(sessions),
+        download_jobs=downloads,
+    )
+
+    start_session_script(provider, "id=cam123/bootstrap")
+    artifact = downloads.get("shared-fw")
+    assert artifact is not None
+    assert artifact.ref_count == 0
+    release.set()

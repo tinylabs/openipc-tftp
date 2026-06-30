@@ -36,6 +36,7 @@ class ClientSession:
     env: dict[str, str] = field(default_factory=dict)
     public_env: dict[str, str] = field(default_factory=dict)
     preflight_pending: bool = False
+    download_artifacts: set[str] = field(default_factory=set)
 
     def record_rrq(self, parsed: ParsedPath) -> None:
         self.updated_at = time.time()
