@@ -7,17 +7,76 @@ There are only two request modes:
 - RRQ or WRQ without `id=<ident>`: handled as a normal static TFTP file operation under the configured root directory.
 - RRQ or WRQ starting with `id=<ident>`: handled as part of a session.
 
+## Sample implementation - OpenIPC: https://wiki.openipc.org/
+
+uboot-tftp is a generic python scripted dynamic tftp server.
+
+It only requires the following dependencies:
+
+- uboot with hush parser enabled (CONFIG_HUSH_PARSER=y)
+- Networking with tftp commands: tftp/tftpboot, source, tftpput[optional], dhcp[optional]
+- baseaddr/loadaddr environment variable pointing to the RAM base
+
+As a proof of concept, an implementation for installation of the openipc project has been implemented.
+
+See [openipc.py](scripts/openipc.py) for the reference implementation.
+
+Below is the terminal output showing openipc install using the server from a networked camera.
+
+```
+OpenIPC # printenv bootstrap
+bootstrap=run netinit; if tftpboot ${baseaddr} ${serverip}:id=${hostname}/${cmd}/${args}; then source ${baseaddr}; else echo "TFTP request failed: is TFTP server running?"; fi
+OpenIPC # printenv netinit  
+netinit=if test "${ip}" = "static" || test -n "$netdone" && test "$netdone" -eq 1; then echo "Networking OK"; else setenv autoload no; dhcp; netdone=1; fi
+OpenIPC #
+OpenIPC # hostname=cam-final; cmd=install; args=vendor=goke/soc=gk7205v300; run bootstrap
+Checking hush shell... 
+Fetching current uboot environment... OK
+Probing NOR flash... 0x1000000
+Backing up NOR flash.
+Copying NOR to RAM... OK
+Downloading backup via TFTP...
+  Saved backup as backup/install-backup-cam-final-gk7205v300-16mb-20260630-094514.bin
+Using cached download: install/openipc-gk7205v300-lite-16mb.bin.
+Extracting uboot env from image... OK
+Patched env variables:
+  Reusing ethaddr from old env
+  ethaddr    = 02:2a:0e:f2:cb:41
+  hostname   = cam-final
+  bootp_vci  = uboot.cam-final
+  serverip   = 10.0.1.20
+  ipaddr     = 10.0.50.179
+  netmask    = 255.255.255.0
+  gatewayip  = 10.0.50.1
+  fw         = lite
+  ip         = dhcp
+Uploading cam-final-openipc-gk7205v300-lite-16mb.bin... OK
+Erasing flash... OK
+Writing flash... OK
+
+Install finished for cam-final
+------------------------------
+Flash backup: /home/elliot/work/openipc/uboot-tftp/files/install-backup-cam-final-gk7205v300-16mb-20260630-094514.bin
+Web UI: http://10.0.50.179/
+SSH: ssh root@10.0.50.179 (password: 12345)
+Support OpenIPC: https://opencollective.com/openipc/contribute
+
+Rebooting in 10 seconds
+Enter Ctrl+C to cancel...
+Rebooting...
+```
+
 ## Session Model
 
 A session starts when the server receives an RRQ like:
 
 ```text
-id=cam123/bootstrap
+id=cam123/<cmd>/[key1=arg1/key2=arg2/...]
 ```
 
 Before the user handler runs, `uboot-tftp` performs an internal preflight to verify that the target U-Boot has a hush-compatible shell. Session handlers only start after that check succeeds.
 
-The server creates a new session for `cam123` and calls the matching user handler from `script.py`. If no matching section exists in `config.toml`, the `[default]` handler is used.
+The server creates a new session for `cam123` and calls the matching user handler from toml `scriptfile`. If no matching section exists in `config.toml`, the `[default]` handler is used.
 
 Session handlers are `async def` functions. They use these helpers:
 
@@ -25,6 +84,7 @@ Session handlers are `async def` functions. They use these helpers:
 - `await tftp.exec_recv(script, size)`
 - `await tftp.fetch_env()`
 - `tftp.write_file(path, body)`
+- ...
 
 `exec(...)` sends a script to the client. If `final=False`, the server appends an internal continuation `tftpboot` so the session can continue on the next RRQ.
 
@@ -44,84 +104,98 @@ If the upload fails and the client returns on the failure continuation path, `ex
 
 ## Config
 
-Example [`config.toml`](/home/elliot/work/openipc/openipc-tftp/config.toml:1):
+Example [`config.toml`](config/openipc.toml):
 
 ```toml
 [server]
-scriptfile = "script.py"
-rootdir = "/absolute/path/to/files"
-address = "::"
-port = 6969
+scriptfile = "../scripts/openipc.py"
+rootdir = "/mnt/tftp"
+address = "0.0.0.0"
+port = 69
 timeout = 5
 retries = 3
-log_level = "INFO"
+log_level = "info"
 
 [env]
-rambase = "loadaddr"
+# These 3 variables are required for server script generation
+rambase = "baseaddr"
 cmdtftp = "tftpboot"
 cmdtftpput = "tftpput"
+# These are arbitrary user defined and will be passed to the env dict
+# to be used in the user script
+nfsserver = '10.0.70.220'
+rootfs = '/mnt/STORAGE/config/camera/boot/rootfs'
+kernel = 'uImage.generic'
 
 [cam123]
-entry_func = "camera_bootstrap"
+entry_func = "cam123_entry"
+# Target specific entries will override global env above
+rootfs = '/mnt/STORAGE/config/camera/boot/rootfs.${hostname}'
+kernel = 'uImage.${soc}'
 
 [default]
+# This will get called if a matching 'id=' entry isn't found.
 entry_func = "default"
 ```
 
 ## Script API
 
-Example [`script.py`](/home/elliot/work/openipc/openipc-tftp/script.py:1):
-
 ```python
+from uboot_tftp.ubootscript import *
+from uboot_tftp.ubootops import *
+from uboot_tftp.ubootterm import *
+from uboot_tftp.ubootenv import *
+
 from uboot_tftp.scripted import ReceiveFailedError
 
-
-async def default(tftp, ident, cmd, env):
-    await tftp.exec(
-        [
-            f"echo default session for {ident}",
-            f"echo requested cmd: {cmd}",
-            f"echo env hostname: {env.get('hostname', '<unset>')}",
-        ],
-        final=True,
+async def default(tftp, ident, cmd, tftp_env):
+    # Fetch current environment                         
+    cenv = await tftp.fetch_env(
+        upload_script=[
+            # Colorized ANSI terminal support with uboot_msg helper
+            uboot_msg ("Fetching current uboot environment... ", bold=True),
+        ]
     )
 
+    # Run commands and dynamically fetch set variables
+    mac = '02:11:22:33:44:55'
+    await tftp.exec ([
+        uboot_msg(f"Getting new IP with ethaddr={mac}..."),
+        f'setenv ethaddr {mac}',
+        'setenv autoload no',
+        'dhcp',
+        uboot_msg("Success: ip=${ipaddr} mask=${netmask} gateway=${gatewayip}")
+    # keys(optional) specifies which tftp_env dict keys to update
+    ], keys=['ipaddr', 'netmask', 'gatewayip'])
 
-async def camera_bootstrap(tftp, ident, cmd, env):
-    if cmd == "bootstrap":
-        await tftp.exec(
-            [
-                f"echo preparing {ident}",
-                f"echo using {tftp.rambase}",
-            ]
-        )
+    # These dict items were dynamically added on completion of the above command
+    print (f'DHCP: {tftp_env["ipaddr"]}:{tftp_env["netmask"]} GW:{tftp_env["gatewayip"]}')
 
-        try:
-            env = await tftp.fetch_env()
-        except ReceiveFailedError:
-            await tftp.exec(["echo upload failed"], final=True)
-            return
+# Entry points must match this signature
+async def cam123_entry(tftp, ident, cmd, tftp_env):
+    match cmd:
+        # Just boot normally
+        case 'boot':
+            # No final=True flag needed, this forces end of session
+            await uboot_boot (tftp)
+        # Boot with NFS root
+        case 'bootnfs':
+            bootargs = ' '.join ([f'mem=${{totalmem}}',
+                                  'console=ttyAMA0,115200',
+                                  'panic=20',
+                                  'root=/dev/nfs',
+                                  'ip=dhcp',
+                                  f'nfsroot={tftp_env["nfsserver"]}:{tftp_env["rootfs"]},v3,nolock',
+                                  'rw'])
+            await tftp.exec([
+                f'setenv bootargs {bootargs}',
+                uboot_msg ('Booting from NFS...'),
+                uboot_msg (f'bootargs=${{bootargs}}'),
+                f'tftpboot {tftp.rambase} {tftp.server_ip}:${{hostname}}/{tftp_env["kernel"]}; bootm {tftp.rambase}',
+            ], final=True)
+        case '_': # Command doesn't match
+             await tftp.exec([uboot_err(f"Command: {cmd} invalid")], final=True)
 
-        await tftp.exec([f"echo bootstrap complete {env.get('ethaddr', '<unknown>')}"], final=True)
-        return
-
-    await tftp.exec([f"echo unknown cmd {cmd}"], final=True)
-```
-
-Example uploading from a RAM offset:
-
-```python
-async def dump_region(tftp, ident, cmd, env):
-    if cmd != "dump":
-        await tftp.exec(["echo unknown cmd"], final=True)
-        return
-
-    await tftp.exec_recv(
-        ["echo uploading memory region"],
-        0x1000,
-        offset=0x400,
-    )
-    await tftp.exec(["echo upload complete"], final=True)
 ```
 
 ## Static Files
