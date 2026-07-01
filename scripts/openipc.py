@@ -348,29 +348,126 @@ async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: 
         uboot_msg()
     ], final=final)
 
-async def crc32(tftp, tftp_env, addr: int, length: int) -> int:
-    await tftp.exec([
-        f'setexpr.l dest {hex(addr)} + {hex(length)}',
-        'setexpr.l tmp *${dest}',        
-        f'crc32 {hex(addr)} {hex(length)} ${{dest}}',
-        'setexpr.l result *${dest}',
-        'md.l ${dest} ${tmp} 1',
-        'setenv tmp; setenv dest',
-    ], keys=['result'])
-    crc_raw = bytes.fromhex(tftp_env['result'].zfill(8))
-    crc = struct.unpack("<I", crc_raw)[0]
-    return crc
-
-async def endian(tftp, tftp_env) -> str:
+# Move to framework preflight
+async def is_le(tftp, tftp_env) -> bool:
     await tftp.exec([
         f'setexpr.l tmp *{tftp.rambase}',
         f'mw.l {tftp.rambase} 0x11223344 1',
-        f'setexpr.b result *{tftp.rambase}',
-        f'md.l {tftp.rambase} ${{tmp}} 1',
+        f'setexpr.b _1 *{tftp.rambase}',
+        f'mw.l {tftp.rambase} ${{tmp}} 1',
         'setenv tmp',
-    ], keys=['result'])
-    return 'LE' if tftp_env['result'] == '44' else 'BE'
+    ], keys=['_1'])
+    return True if tftp_env['_1'] == '44' else False
+
+def crc32_script(addr: int, length: int, scratch: str, result: str) -> list[str]:
+    return [
+        f'setexpr.l dest {scratch}',
+        'setexpr.l tmp *${dest}',        
+        f'crc32 {hex(addr)} {hex(length)} ${{dest}}',
+        f'setexpr.l {result} *${{dest}}',
+        'mw.l ${dest} ${tmp} 1',
+        'setenv tmp; setenv dest',
+    ]
+
+async def crc32(tftp,
+                env: dict[str, str],
+                ranges: list[(int, int)],
+                le=True,
+    ) -> list[int]:
+    """ Calculate multiple CRCs in one call """
     
+    res, cmds = [], []
+    keys = ['_' + str(x) for x in range (len(ranges))]
+    for _, (addr, length) in enumerate (ranges):
+        cmds += crc32_script (addr, length, scratch=tftp.rambase, result=keys[_])
+    await tftp.exec(cmds, keys=keys)
+    for key in keys:
+        crc_raw = bytes.fromhex(env[key].zfill(8))
+        if le:
+            res.append (struct.unpack("<I", crc_raw)[0])
+        else:
+            res.append (struct.unpack(">I", crc_raw)[0])
+    return res
+
+
+Range = tuple[int, int]
+
+def batched(items: list[Range], size: int) -> list[list[Range]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+def split_range(addr: int, size: int, parts: int = 2) -> list[Range]:
+    if size % parts != 0:
+        raise ValueError(f"range size {size:#x} is not divisible by {parts}")
+
+    chunk = size // parts
+    return [(addr + i * chunk, chunk) for i in range(parts)]
+
+def coalesce_ranges(ranges: list[Range]) -> list[Range]:
+    if not ranges:
+        return []
+
+    ranges = sorted(ranges)
+
+    merged: list[Range] = []
+    cur_addr, cur_size = ranges[0]
+    cur_end = cur_addr + cur_size
+
+    for addr, size in ranges[1:]:
+        end = addr + size
+
+        if addr <= cur_end:
+            # Adjacent or overlapping.
+            cur_end = max(cur_end, end)
+        else:
+            merged.append((cur_addr, cur_end - cur_addr))
+            cur_addr = addr
+            cur_end = end
+
+    merged.append((cur_addr, cur_end - cur_addr))
+    return merged
+
+async def find_active(
+    tftp,
+    tftp_env,
+    ranges: list[Range],
+    *,
+    min_chunk: int = 0x800, # 2kB chunks
+    split_parts: int = 2,
+    max_ranges: int = 6,
+) -> list[Range]:
+    cur = ranges
+
+    while cur:
+        changed: list[Range] = []
+
+        for batch in batched(cur, max_ranges):
+            res1 = await crc32(tftp, tftp_env, batch, True)
+            res2 = await crc32(tftp, tftp_env, batch, True)
+
+            changed.extend(
+                r
+                for r, x, y in zip(batch, res1, res2)
+                if x != y
+            )
+
+        if not changed:
+            return []
+
+        # Assuming all ranges at this iteration have the same size.
+        chunk = changed[0][1]
+
+        if chunk <= min_chunk:
+            return coalesce_ranges(changed)
+
+        cur = [
+            subrange
+            for addr, size in changed
+            for subrange in split_range(addr, size, split_parts)
+        ]
+
+    return []
+
+
 async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     '''
     function: default - Called when config.toml doesn't have matching id=
@@ -418,16 +515,47 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
                 )
             await tftp.exec ([uboot_msg ()], final=True)
 
-        case 'endian':
-            res = await endian(tftp, tftp_env)
-            await tftp.exec([uboot_msg(f'endian={res}')], final=True)
+        case 'active':
+            ranges = [
+                # 16MB ranges - 96MB total
+                (0x42000000, 0x1000000), # Dynamic script (changes crc)
+                (0x43000000, 0x1000000), # Stable
+                (0x44000000, 0x1000000), # Stable
+                (0x45000000, 0x1000000), # Stable
+                (0x46000000, 0x1000000), # Stable
+                (0x47000000, 0x1000000), # TLBs, stack, etc (changes crc)
+            ]
+            '''
+            ranges = [
+                (0x40000000, 0x1000000),
+                (0x41000000, 0x1000000),
+            ]
+            '''
+            res = await find_active(tftp, tftp_env, ranges)
+            cmds = [uboot_msg(f'{hex(addr)}:{hex(length)}', color='yellow')
+                    for _, (addr, length) in enumerate(res)]
+            await tftp.exec(cmds, final=True)
             
         case 'crc32':
-            addr = int(tftp_env['addr'], 0)
-            length = int(tftp_env['len'], 0)
-            res = await crc32 (tftp, tftp_env, addr, length)
-            await tftp.exec([uboot_msg(f'crc={hex(res)}')], final=True)
+            ranges = [
+                # 16MB ranges - 96MB total
+                (0x42000000, 0x1000000), # Dynamic script (changes crc)
+                (0x43000000, 0x1000000), # Stable
+                (0x44000000, 0x1000000), # Stable
+                (0x45000000, 0x1000000), # Stable
+                (0x46000000, 0x1000000), # Stable
+                (0x47000000, 0x1000000), # TLBs, stack, etc (changes crc)
+            ]
             
+            # Check endian so we know how to unpack crc result
+            # TODO: Preflight le check, store in tftp object
+            le = await is_le(tftp, tftp_env)
+            res = await crc32(tftp, tftp_env, ranges, le)                
+            res =  [hex(x) for x in res]
+            cmds = [uboot_msg(f'{hex(addr)}:{hex(addr+length-1)} => {res[_]}', color='yellow')
+                    for _, (addr, length) in enumerate(ranges)]
+            await tftp.exec(cmds, final=True)
+
         # Unrecognized cmd
         case _:
             await uboot_nomatch(tftp, ident, cmd,
