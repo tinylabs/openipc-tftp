@@ -6,6 +6,7 @@ Implements installing openipc on ip cameras
 
 from __future__ import annotations
 
+import struct
 import json
 import re
 import random
@@ -108,7 +109,7 @@ async def openipc_download_binary(tftp, vendor: str, soc: str, size_mb: int, fw:
         f"socs/{quote(soc)}/download_full_image"
         f"?flash_size={quote(str(size_mb))}&flash_type=nor&fw_release={quote(fw)}"
     )
-    return await uboot_download_url (tftp, filepath=filename, url=dl_url, page_url=page_url)
+    return await uboot_download_url (tftp, filepath=filename, url=dl_url, page_url=page_url, cache=True)
 
 
 async def openipc_nor_backup (tftp, sz: int, filename: str='', final=False) -> bytes:
@@ -151,48 +152,53 @@ def build_runcmd(cmd: str, args: str=''):
         "run bootstrap"
     ])
 
-def openipc_patch_env(tftp, ident: str, old_env: dict[str,str], new_env: dict[str,str]):
-    msgs = []
-    if 'ethaddr' in old_env and old_env['ethaddr'] != '00:00:23:34:45:66':
-        msgs += [uboot_msg(f"  Reusing ethaddr from old env")]
-        new_env['ethaddr'] = old_env['ethaddr']                                     
-    elif 'ethaddr' not in new_env or new_env['ethaddr'] == '00:00:23:34:45:66':
-        msgs += [uboot_msg(f"  Invalid ethaddr, generating random mac...")]
+def gen_mac (mac: str) -> str:
+    if mac in ('00:00:23:34:45:66', '00:00:00:00:00:00'):
         mac_bytes = [0x02] + [random.randint(0x00, 0xFF) for _ in range(5)]
         mac = ":".join(f"{b:02x}" for b in mac_bytes)
-        new_env['ethaddr'] = mac
+    return mac
 
-    new_env['netinit'] = '; '.join ([
-        'if test "${ip}" = "static" || test -n "$netdone" && test "$netdone" -eq 1',
-        'then echo "Networking OK"',
-        'else setenv autoload no',
-        'dhcp',
-        'netdone=1',
-        'fi'
-    ])
-    new_env['bootstrap'] = '; '.join ([
-        'run netinit',
-        f'if tftpboot {tftp.rambase} '+'${serverip}:id=${hostname}/${cmd}/${args}',
-        f'then source {tftp.rambase}',
-        'else echo "TFTP request failed: is TFTP server running?"',
-        'fi'
-    ])
+def trunc(s: str, max_len: int, suffix: str = "...") -> str:
+    if len(s) <= max_len:
+        return s
+    elif max_len <= len(suffix):
+        return suffix[:max_len]
+    return s[:max_len - len(suffix)] + suffix
 
-    # Set core identifiers
-    new_env['bootp_vci'] = f'uboot.{ident}'
-    new_env['hostname']  = ident
-
-    # Add a few helper commands
-    new_env['install']   = build_runcmd ('install')
-    new_env['backup']    = build_runcmd ('backup')
-    new_env['probe_nor'] = build_runcmd ('probe')
-
-    # Copy key vars from old to new environment
+def openipc_patch_env(tftp, ident: str, old_env: dict[str,str], new_env: dict[str,str]):
+    merge = {
+        'ethaddr'    : gen_mac (old_env['ethaddr']),
+        'bootp_vci'  : f'uboot.{ident}',
+        'hostname'   : ident,
+        'install'    : build_runcmd ('install'),
+        'backup'     : build_runcmd ('backup'),
+        'probe_nor'  : build_runcmd ('probe'),
+        'bootstrap'  : '; '.join ([
+            'run netinit',
+            f'if tftpboot {tftp.rambase} '+'${serverip}:id=${hostname}/${cmd}/${args}',
+            f'then source {tftp.rambase}',
+            'else echo "TFTP request failed: is TFTP server running?"',
+            'fi'
+        ]),
+        'netinit'    : '; '.join ([
+            'if test "${ip}" = "static" || test -n "$netdone" && test "$netdone" -eq 1',
+            'then echo "Networking OK"',
+            'else setenv autoload no',
+            'dhcp',
+            'netdone=1',
+            'fi'
+        ]),
+    }
+    # Add new entries + merge old > new
+    new_env.update({k: merge[k] for k in merge.keys()})
     keys = ['ipaddr', 'netmask', 'gatewayip', 'dnsip', 'serverip', 'fw', 'ip']
     new_env.update({k: old_env[k] for k in keys if k in old_env})
-    for key in ['ethaddr', 'hostname', 'bootp_vci', 'serverip',
-                'ipaddr', 'netmask', 'gatewayip', 'fw', 'ip']:
-        msgs += [uboot_msg(f"  {key:<10} = {new_env[key]}")]
+
+    msgs = []
+    for k, v in merge.items():
+        msgs += [uboot_msg(f'+  {k:<10} = {trunc(v, 20)}')]
+    for k, v in {key: new_env[key] for key in keys if key in old_env}.items():
+        msgs += [uboot_msg(f'>  {k:<10} = {trunc(v, 20)}')]
     return msgs
 
 def check_install_args (tftp, ident: str, cmd: str,
@@ -281,7 +287,6 @@ async def openipc_install(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
         ])
         return
 
-    # Patch new environment
     # TODO: check if uboot env crc needs to be big endian on MIPS
     # Otherwise patched env won't load on reset
     msgs = [uboot_msg('OK'), uboot_msg('Patched env variables:', bold=True)] + openipc_patch_env(tftp, ident, cenv, new_env)
@@ -291,19 +296,18 @@ async def openipc_install(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     tftp.write_file(filename, patched_bin)
 
     # TODO:
-    # Find partitions in firmware image.
-    # Craft mtdparts to match found partitions
     # - Fetch assets from github latest instead
     # https://api.github.com/repos/OpenIPC/firmware/releases/tags/latest
     # uboot, kernel+rootfs
     # Extract partition table from uboot env variables
+    # -> User fetched u-boot as source of truth for partition table
     # mtdparts=sfc:256k(boot),64k(env),3072k(kernel),10240k(rootfs),-(rootfs_data)
     # Take CRC of each partition to check if we need to reflash
     
     # Flash new firmware
     await openipc_nor_restore (tftp, filename, len (patched_bin))
 
-    # Set new ethaddr and run dhcp for updated IP if applicable
+    # Get new IP to display if mac address changed
     if new_env['ip'] != 'static' and (new_env['ethaddr'] != cenv['ethaddr']):
         await tftp.exec ([
             uboot_msg(f"Getting new IP with ethaddr={new_env['ethaddr']}..."),
@@ -344,6 +348,29 @@ async def uboot_nomatch(tftp, ident: str, cmd: str, cmd_list: list=None, final: 
         uboot_msg()
     ], final=final)
 
+async def crc32(tftp, tftp_env, addr: int, length: int) -> int:
+    await tftp.exec([
+        f'setexpr.l dest {hex(addr)} + {hex(length)}',
+        'setexpr.l tmp *${dest}',        
+        f'crc32 {hex(addr)} {hex(length)} ${{dest}}',
+        'setexpr.l result *${dest}',
+        'md.l ${dest} ${tmp} 1',
+        'setenv tmp; setenv dest',
+    ], keys=['result'])
+    crc_raw = bytes.fromhex(tftp_env['result'].zfill(8))
+    crc = struct.unpack("<I", crc_raw)[0]
+    return crc
+
+async def endian(tftp, tftp_env) -> str:
+    await tftp.exec([
+        f'setexpr.l tmp *{tftp.rambase}',
+        f'mw.l {tftp.rambase} 0x11223344 1',
+        f'setexpr.b result *{tftp.rambase}',
+        f'md.l {tftp.rambase} ${{tmp}} 1',
+        'setenv tmp',
+    ], keys=['result'])
+    return 'LE' if tftp_env['result'] == '44' else 'BE'
+    
 async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
     '''
     function: default - Called when config.toml doesn't have matching id=
@@ -390,6 +417,16 @@ async def default(tftp, ident: str, cmd: str, tftp_env: dict[str, str]):
                     filepath=f'{path}/{soc}/{name}'
                 )
             await tftp.exec ([uboot_msg ()], final=True)
+
+        case 'endian':
+            res = await endian(tftp, tftp_env)
+            await tftp.exec([uboot_msg(f'endian={res}')], final=True)
+            
+        case 'crc32':
+            addr = int(tftp_env['addr'], 0)
+            length = int(tftp_env['len'], 0)
+            res = await crc32 (tftp, tftp_env, addr, length)
+            await tftp.exec([uboot_msg(f'crc={hex(res)}')], final=True)
             
         # Unrecognized cmd
         case _:
